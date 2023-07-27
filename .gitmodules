@@ -1,0 +1,3 @@
+[submodule "weighted-mask"]
+	path = weighted-mask
+	url = https://github.com/jaminrader/WeightedMaskAnalogForecasting.git
