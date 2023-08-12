@@ -9,3 +9,13 @@
 # to the processing steps as copies
 
 # print line between operations print(-------------------------------------------------------)
+
+
+
+def stack_samples(self, data_dictionary, ):
+    "stack samples by given dimension (ensemble=0, model=1, . . .)"
+    print('')
+
+
+    print('')
+    return data_dictionary
