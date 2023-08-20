@@ -270,7 +270,7 @@ class DataProcessing():
                     new_times = xr.CFTimeIndex(self.data_dictionary[var][model].time.values).shift(n=roll_period+1, freq=self.period)
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=new_times)
                 #############################################################################################################
-                # MIGHT BE A BAD WAY TO IMPLEMENT, BUT REMOVE THE ROLL_PERIOD -1 ENTRIES FROM START OR END DEPENDING ON SIGN
+                # MIGHT BE A BAD WAY TO IMPLEMENT, BUT REMOVE THE ROLL_PERIOD-1 ENTRIES FROM START OR END DEPENDING ON SIGN
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(abs(roll_period)-1))
                 else:
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(roll_period-1))+1))

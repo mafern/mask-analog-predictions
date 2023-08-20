@@ -86,12 +86,6 @@ def process_data(experiment_settings, overwrite_data=False):
                 print('-------------------------------------------------------')
             print('-------------------------------------------------------')
 
-            ####################################################################################
-            # just the data_dictionary -- flattened to remove model layer
-            # flatten the members first
-            # then, can check if multiple variables and combine these into one DataSet
-            ####################################################################################
-            
             # add these to the current dictionary, but first flatten models and variables into single DataSet
             for var in experiment_settings["variable_list"]:
                 current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()], dim="member")
@@ -111,22 +105,30 @@ def process_data(experiment_settings, overwrite_data=False):
             # update dictionary to return
             processed_data[split_set] = current_data
 
+    # get latitude and longitude, which may be useful
+    processed_data['lat'] = processed_data[split_set]['inputs'].lat.to_numpy()
+    processed_data['lon'] = processed_data[split_set]['inputs'].lon.to_numpy()
+    
     return processed_data
 
+# -------------------------------------------------------------------------------
 
+def neural_network_stack(dataset):
+    "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
+    # remove bnds dimension, replace NaNs with zeros
+    inputs = dataset['inputs'].drop_dims("bnds").fillna(0)
+    target = dataset['target'].drop_dims("bnds").fillna(0)
+    
+    # stack time and members as samples, convert to numpy array with correct shape
+    inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
+    target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
+    ####################################################################################
+    # NOT SURE IT MAKES SENSE TO HAVE MULTIPLE DIFFERENT VARIABLES GO INTO THE NETWORK
+    ####################################################################################
+    print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
+    return inputs, target
 
-####################################################################################
-# might be worth also doing a replace nan with 0 here as a final check before passing
-# to the neural network
-def stack_samples(self, data_dictionary, ):
-    "stack samples by given dimension (ensemble=0, model=1, . . .)"
-    print('')
-
-
-    print('')
-    return data_dictionary
-####################################################################################
-
+# -------------------------------------------------------------------------------
 
 def combine_ncs(directory, nfiles, delete_old=False):
     """
@@ -156,6 +158,7 @@ def combine_ncs(directory, nfiles, delete_old=False):
         # save as .nc
         ds_complete.to_netcdf(path=fname_start+fname_end)
 
+# -------------------------------------------------------------------------------
 
 def make_model_masks(file):
     """
