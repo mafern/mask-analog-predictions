@@ -9,8 +9,8 @@ import xarray as xr
 xr.set_options(keep_attrs=True)
 import xesmf as xe
 # import cfgrib
-import warnings
-warnings.filterwarnings("ignore")
+# import warnings
+# warnings.filterwarnings("ignore")
 import regionmask
 import json
 
@@ -96,7 +96,7 @@ class DataProcessing():
             
             for model in model_list:
                 # file path for this variable and model
-                file_path = os.path.join('data', period, model, variable)
+                file_path = os.path.join('raw_data', period, model, variable)
                 # check that path exists, if not print warning and continue
                 if not os.path.exists(file_path):
                     print('directory:', file_path, 'does not exist')
@@ -403,7 +403,7 @@ class DataProcessing():
                 # try loading model specific mask first
                 try:
                     # load map for this model
-                    model_mask = xr.load_dataset(os.path.join('data', self.period_long, model, mask+'mask.nc'))
+                    model_mask = xr.load_dataset(os.path.join('raw_data', self.period_long, model, mask+'mask.nc'))
                     # if the current resolution is different from default (does not match saved mask)
                     if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
                         # adjust the resolution of the mask to be the same as the model and variable
@@ -422,6 +422,8 @@ class DataProcessing():
                 
                 # mask the datasets
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] * final_mask
+                # save the final_mask for later use
+                self.final_mask = final_mask
 
     # -------------------------------------------------------------------------------
 

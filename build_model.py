@@ -156,20 +156,20 @@ def build_interp_model(settings, x_train):
     
     # model takes in soi and analog and returns weighted versions as well as weight mask
     mask_model, soi_input, analog_input = make_weights_model(x_train,
-                                                             mask_model_act=settings["mask_model_act"],
+                                                             mask_model_act=settings["mask_activation"],
                                                              mask_l1=settings["mask_l1"],
                                                              mask_l2=settings["mask_l2"],
-                                                             mask_initial_value=settings["mask_initial_value"],
-                                                             normalize_weights_bool=settings["normalize_weights_bool"]
+                                                             mask_initial_value=settings["mask_init"],
+                                                             normalize_weights_bool=settings["norm_weights"]
                                                              )
     
     # model takes in weighted maps and returns dissimiliarity (mse, assuming soi is truth)
     dissimilarity_model = make_dissimilarity_model(x_train)
     
     # model takes in the dissimilarity above (mse) and predicts dissimilarity in the future
-    prediction_model = make_prediction_model(prediction_model_nodes=settings["prediction_model_nodes"],
-                                             prediction_model_act=settings["prediction_model_act"],
-                                             rng_seed=settings["rng_seed"],
+    prediction_model = make_prediction_model(prediction_model_nodes=settings["prediction_nodes"],
+                                             prediction_model_act=settings["prediction_activation"],
+                                             rng_seed=settings["seed"],
                                              output_activation="linear",
                                              )
     

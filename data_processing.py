@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 import gzip
 import os
-import _data_processing as dp
+import _data_processing as _dp
 import pickle
 from copy import deepcopy
 
@@ -42,11 +42,11 @@ def process_data(experiment_settings, overwrite_data=False):
             # pretty stupid switch to make try fail if overwrite_data is True
             1/(overwrite_data-1)
             
-            # try loading pickle files which are DataProcessing objects
-            # one each for the different split sets (analog, training, validation, testing)
-            # each of these contains the inputs and outputs
+            # try loading pickle files which are dictionaries with both inputs and target
+            # for each of the different split sets (analog, training, validation, testing)
             with gzip.open(os.path.join("processed_data", experiment_name+'_'+split_set+'.pickle'), "rb") as filename:
                 processed_data[split_set] = pickle.load(filename)
+            print('loading already processed pre-saved', split_set, 'dataset')
 
         # if file does not exist, process the data and save
         except:
@@ -61,18 +61,34 @@ def process_data(experiment_settings, overwrite_data=False):
             # remove selected indices from member_rng
             member_rng = np.setdiff1d(member_rng, rnd_inds)
             
+            
+            
+            
+#             for reproducing Jamin's results
+            # if split_set == 'analog':
+            #     rnd_inds = np.arange(0, 35)
+            # elif split_set == 'training':
+            #     rnd_inds = np.arange(35, 50)
+            # elif split_set == 'validation':
+            #     rnd_inds = np.arange(50, 55)
+            # else:
+            #     rnd_inds = np.arange(95, 100)
+ 
+
+
+            
             # load the appropriate ensemble members for the requested models/variables
-            input_raw = dp.DataProcessing(model_list, experiment_settings['variable_list'], experiment_settings['input_period'], rnd_inds)
+            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], experiment_settings['data_period'], rnd_inds)
             # deepcopy a version for the outputs
             output_raw = deepcopy(input_raw)
 
             # initialize dictionary for this split set
-            current_data = {"inputs": {}, "target": {}}
+            current_data = {"inputs": {}, "target": {}, "lat": {}, "lon": {}, "land_ocean_mask": {}}
             # run some processing steps for the inputs
             print('#################################################################')
             print('processing', split_set, 'input dataset')
             print('#################################################################')
-            for step in experiment_settings['input_proc_steps']:
+            for step in experiment_settings['inputs_proc_steps']:
                 eval('input_raw.'+step)
                 print('-------------------------------------------------------')
             print('-------------------------------------------------------')
@@ -98,16 +114,21 @@ def process_data(experiment_settings, overwrite_data=False):
                 current_data["inputs"] = current_data["inputs"][var]
                 current_data["target"] = current_data["target"][var]
                 
+            # get latitude and longitude, which may be useful
+            current_data['lat'] = current_data['inputs'].lat.to_numpy()
+            current_data['lon'] = current_data['inputs'].lon.to_numpy()
+            # if a land or ocean mask was used, carry that over
+            if experiment_settings['mask']:
+                current_data['land_ocean_mask'] = input_raw.final_mask
+            else:
+                current_data['land_ocean_mask'] = xr.DataArray(data=1)
+                
             # save processed data in pickle format
             with gzip.open(os.path.join("processed_data", experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
                 pickle.dump(current_data, filename)
 
             # update dictionary to return
             processed_data[split_set] = current_data
-
-    # get latitude and longitude, which may be useful
-    processed_data['lat'] = processed_data[split_set]['inputs'].lat.to_numpy()
-    processed_data['lon'] = processed_data[split_set]['inputs'].lon.to_numpy()
     
     return processed_data
 
@@ -116,8 +137,10 @@ def process_data(experiment_settings, overwrite_data=False):
 def neural_network_stack(dataset):
     "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
     # remove bnds dimension, replace NaNs with zeros
-    inputs = dataset['inputs'].drop_dims("bnds").fillna(0)
-    target = dataset['target'].drop_dims("bnds").fillna(0)
+    # inputs = dataset['inputs'].drop_dims("bnds").fillna(0)
+    # target = dataset['target'].drop_dims("bnds").fillna(0)
+    inputs = dataset['inputs'].fillna(0)
+    target = dataset['target'].fillna(0)
     
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()

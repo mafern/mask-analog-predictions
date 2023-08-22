@@ -8,10 +8,21 @@ import silence_tensorflow.auto
 import tensorflow as tf
 import build_model
 import metrics
+import os
+import logging
+import pickle
+import warnings
+from silence_tensorflow import silence_tensorflow
+silence_tensorflow()
+logging.disable(logging.WARNING)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# 0 = all messages are logged (default behavior) , 1 = INFO messages are not printed , 2 = INFO and WARNING messages
+# are not printed , 3 = INFO, WARNING, and ERROR messages are not printed
+tf.get_logger().setLevel('ERROR')
+
 
 __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
-
 
 
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
@@ -26,80 +37,146 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         targets = metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog])
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
+# -------------------------------------------------------------------------------
 
-
-def train_model(settings, model, analog_input, analog_output, soi_train_input, soi_train_output, soi_val_input, soi_val_output):
-    ""
+def train_model(settings, model, analog_input, analog_output, soi_train_input, soi_train_output, soi_val_input, soi_val_output, overwrite_model=False):
+    """
     
-    # EARLY STOPPING
-    earlystopping = tf.keras.callbacks.EarlyStopping(
-        monitor='val_loss', 
-        patience=settings["patience"], 
-        min_delta=settings["min_delta"],
-        verbose=1, mode='auto', 
-        restore_best_weights=True)
+    """
+    experiment_name = settings['experiment_name']
+    seed = settings['seed']
+    # check if model already exists or overwrite is on
+    if not (os.path.exists(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5")) and os.path.exists(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model"))) or overwrite_model is True:
+        # model is not already saved or overwrite has been requested, so train and save model
+    
+        # EARLY STOPPING
+        earlystopping = tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss', 
+            patience=settings["patience"], 
+            min_delta=settings["min_delta"],
+            verbose=1, mode='auto', 
+            restore_best_weights=True)
 
-    # LEARNING RATE
-    optimizer = tf.keras.optimizers.Adam(learning_rate=settings["learning_rate"])
+        # LEARNING RATE
+        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=settings["learning_rate"])
 
-    # LOSS FUNCTION, INCLUDING SETTING HUBER LOSS DELTA PARAMETER
-    if settings["loss_f"] == 'huber':
+        # LOSS FUNCTION, INCLUDING SETTING HUBER LOSS DELTA PARAMETER
+        # if settings["loss_f"] == 'huber':
+        #     gen = batch_generator(settings,
+        #                           soi_train_input, soi_train_output,
+        #                           analog_input, analog_output, batch_size=2_500,
+        #                           rng_seed=settings["seed"]+4)
+        #     __, random_targets = next(gen)
+        #     gen.close()
+        #     huber_delta = np.percentile(random_targets[:], settings["percentile_huber_d"])
+        #     settings["huber_delta"] = huber_delta
+        #     loss = tf.keras.losses.Huber(delta=huber_delta,)
+        # else:
+        #     loss = settings["loss_f"]
+        loss = settings["loss"]
+
+        # COMPILE THE MODEL
+        model.compile(loss=loss, optimizer=optimizer, metrics=[metrics.pred_range,],)
+
+        # continuosly returns batch_size number of soi and analog inputs (features),
+        # along with their target absolute differences (labels)
+        # despite an individual batch of soi and analog being unlikely to be ideal for training,
+        # this can be repeated with different random batches until the loss is acceptable 
+        training_data = batch_generator(settings,
+                                        soi_train_input, soi_train_output,
+                                        analog_input, analog_output,
+                                        batch_size=settings["batch_size"],
+                                        rng_seed=settings["seed"]+2)
+
+        # same as above, but for validation data
         gen = batch_generator(settings,
-                              soi_train_input, soi_train_output,
-                              analog_input, analog_output, batch_size=2_500,
-                              rng_seed=settings["rng_seed"]+4)
-        __, random_targets = next(gen)
+                              soi_val_input, soi_val_output,
+                              analog_input, analog_output,
+                              batch_size=settings["val_batch_size"],
+                              rng_seed=settings["seed"]+1) 
+
+        # gets the generator started (so it returns values)
+        x_val, y_val = next(gen)
+        # uses this for all training batches (static validation data)
         gen.close()
-        huber_delta = np.percentile(random_targets[:], settings["percentile_huber_d"])
-        settings["huber_delta"] = huber_delta
-        loss = tf.keras.losses.Huber(delta=huber_delta,)
-    else:
-        loss = settings["loss_f"]
-    
-    # COMPILE THE MODEL
-    model.compile(loss=loss, optimizer=optimizer, metrics=[metrics.pred_range,],)
-    
-    # continuosly returns batch_size number of soi and analog inputs (features),
-    # along with their target absolute differences (labels)
-    # despite an individual batch of soi and analog being unlikely to be ideal for training,
-    # this can be repeated with different random batches until the loss is acceptable 
-    training_data = batch_generator(settings,
-                                    soi_train_input, soi_train_output,
-                                    analog_input, analog_output,
-                                    batch_size=settings["batch_size"],
-                                    rng_seed=settings["rng_seed"]+2)
-    
-    # same as above, but for validation data
-    gen = batch_generator(settings,
-                          soi_val_input, soi_val_output,
-                          analog_input, analog_output,
-                          batch_size=settings["val_batch_size"],
-                          rng_seed=settings["rng_seed"]+1) 
+
+        # train the model
+        start_time = time.time()
+        history = model.fit(
+            training_data,
+            validation_data=(x_val, y_val),
+            steps_per_epoch=soi_train_input.shape[0]//settings["batch_size"],
+            epochs=settings["max_epochs"],
+            callbacks=[earlystopping, ],
+            verbose=1,
+        )
+        stop_time = time.time()
+
+        # DISPLAY THE RESULTS
+        best_epoch = np.argmin(history.history["val_loss"])
+        fit_summary = {
+            "elapsed_time": stop_time - start_time,
+            "best_epoch": best_epoch + 1,
+            "loss_train": history.history["loss"][best_epoch],
+            "loss_valid": history.history["val_loss"][best_epoch],
+        }
         
-    # gets the generator started (so it returns values)
-    x_val, y_val = next(gen)
-    # uses this for all training batches (static validation data)
-    gen.close()
+        # save the model, then return the model along with fit_summary and history
+        save_model_run(model, settings)
+        return model, fit_summary, history
+    
+    else:
+        print('loading pre-saved model')
+        # load model
+        model = load_model(settings)
+        # load history
+        with open(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), 'rb') as file:
+            history = pickle.load(file)
+        # for loaded model, just return the losses
+        fit_summary = {
+            "best_epoch": np.argmin(history["val_loss"]) + 1,
+            "loss_train": history["loss"][np.argmin(history["val_loss"]) + 1],
+            "loss_valid": history["val_loss"][np.argmin(history["val_loss"]) + 1],
+        }
+        return model, fit_summary, history
 
-    # train the model
-    start_time = time.time()
-    history = model.fit(
-        training_data,
-        validation_data=(x_val, y_val),
-        steps_per_epoch=soi_train_input.shape[0]//settings["batch_size"],
-        epochs=settings["max_epochs"],
-        callbacks=[earlystopping, ],
-        verbose=1,
-    )
-    stop_time = time.time()
+# -------------------------------------------------------------------------------
 
-    # DISPLAY THE RESULTS
-    best_epoch = np.argmin(history.history["val_loss"])
-    fit_summary = {
-        "elapsed_time": stop_time - start_time,
-        "best_epoch": best_epoch + 1,
-        "loss_train": history.history["loss"][best_epoch],
-        "loss_valid": history.history["val_loss"][best_epoch],
-    }
+def save_model_run(model, settings):
+    """Save the model, model weights, and training history;
+            *_model,
+            *_weights.h5,
+            *_history.pickle
 
-    return model, fit_summary, history, settings, x_val, y_val
+    Arguments
+    ---------
+
+    model : tensorflow.keras.models.Model
+
+    settings : dict
+        Dictionary of experiment settings for the run.
+        
+    """
+    experiment_name = settings['experiment_name']
+    seed = settings['seed']
+    # Save the model, weights, and history.
+    try:
+        with warnings.catch_warnings():  # catch very annoying tf warnings
+            warnings.simplefilter("ignore")
+            tf.keras.models.save_model(model, os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model"), overwrite=True)
+    except:
+        print('unable to save the model, skipping saving the full model.')
+
+    model.save_weights(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5"))
+
+    with open(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), "wb") as handle:
+        pickle.dump(model.history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+# -------------------------------------------------------------------------------
+
+def load_model(settings):
+    experiment_name = settings['experiment_name']
+    seed = settings['seed']
+    model_savename = os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model")
+    model = tf.keras.models.load_model(model_savename, compile=False)
+    return model

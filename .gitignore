@@ -2,4 +2,9 @@
 *ipynb_checkpoints
 __pycache__
 *.ipynb
-data/*
+raw_data/*
+processed_data/*
+saved_masks/*
+saved_models/*
+saved_analogs/*
+
