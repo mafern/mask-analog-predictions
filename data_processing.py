@@ -24,8 +24,6 @@ def process_data(experiment_settings, overwrite_data=False):
 
     # analog, training, validation, testing split
     # this will be a dictionary with keys: 'analog', 'training', 'validation', 'testing'
-    # and values: the number of members for each --- if 0 or None use number corresponding
-    # to the smallest ensemble amongst models selected
     split = experiment_settings['split']
     
     # random seed for selecting ensemble members
@@ -39,8 +37,10 @@ def process_data(experiment_settings, overwrite_data=False):
     # for each of the split sets (analog, training, validation, testing)
     for split_set in split.keys():
         try:
+            ###################################################################################
             # pretty stupid switch to make try fail if overwrite_data is True
             1/(overwrite_data-1)
+            ###################################################################################
             
             # try loading pickle files which are dictionaries with both inputs and target
             # for each of the different split sets (analog, training, validation, testing)
@@ -60,22 +60,6 @@ def process_data(experiment_settings, overwrite_data=False):
             rnd_inds = rng_seed.choice(member_rng, split[split_set], replace=False, shuffle=False)
             # remove selected indices from member_rng
             member_rng = np.setdiff1d(member_rng, rnd_inds)
-            
-            
-            
-            
-#             for reproducing Jamin's results
-            # if split_set == 'analog':
-            #     rnd_inds = np.arange(0, 35)
-            # elif split_set == 'training':
-            #     rnd_inds = np.arange(35, 50)
-            # elif split_set == 'validation':
-            #     rnd_inds = np.arange(50, 55)
-            # else:
-            #     rnd_inds = np.arange(95, 100)
- 
-
-
             
             # load the appropriate ensemble members for the requested models/variables
             input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], experiment_settings['data_period'], rnd_inds)
@@ -102,11 +86,27 @@ def process_data(experiment_settings, overwrite_data=False):
                 print('-------------------------------------------------------')
             print('-------------------------------------------------------')
 
-            # add these to the current dictionary, but first flatten models and variables into single DataSet
+            # add processed data to the current_data dictionary, but first flatten models and variables into single DataSet
             for var in experiment_settings["variable_list"]:
+                # preserve the model of each member for downstream use
+                for model in model_list:
+                    # make a list of the model name repeating for the number of members
+                    repeat_model = [model] * rnd_inds.size
+                    # add the member indices as a coordinate
+                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(rnd_inds))
+                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(member=(rnd_inds))
+                    # and add the models as a coordinate
+                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
+                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
+                    
+                # now flatten over models
                 current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()], dim="member")
                 current_data["target"][var] = xr.concat([output_raw.data_dictionary[var][model] for model in output_raw.data_dictionary[var].keys()], dim="member")
                 
+            # flatten variables into single dataset (if there is more than one variable)
+            ###################################################################################
+            ### this could be problematic if the resolution for the variables are different
+            ###################################################################################
             if len(experiment_settings["variable_list"]) > 1:
                 current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
                 current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
@@ -114,7 +114,7 @@ def process_data(experiment_settings, overwrite_data=False):
                 current_data["inputs"] = current_data["inputs"][var]
                 current_data["target"] = current_data["target"][var]
                 
-            # get latitude and longitude, which may be useful
+            # get latitude and longitude, which will be useful
             current_data['lat'] = current_data['inputs'].lat.to_numpy()
             current_data['lon'] = current_data['inputs'].lon.to_numpy()
             # if a land or ocean mask was used, carry that over
@@ -145,9 +145,7 @@ def neural_network_stack(dataset):
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
     target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
-    ####################################################################################
-    # NOT SURE IT MAKES SENSE TO HAVE MULTIPLE DIFFERENT VARIABLES GO INTO THE NETWORK
-    ####################################################################################
+    
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target
 

@@ -118,7 +118,8 @@ class DataProcessing():
                     ens_member = route_by_filetype(file_type, file)
                     # create ensemble_list or add to ensemble_list
                     if ii == 0:
-                        ensemble_list = ens_member
+                        # add member dimension
+                        ensemble_list = ens_member.expand_dims(dim={"member": 1}, axis=0)
                     else:
                         ensemble_list = xr.concat([ensemble_list, ens_member], dim="member")
 
@@ -138,7 +139,7 @@ class DataProcessing():
                 # resample step is to align data types and should not change anything meaningful
                 ensemble_list = ensemble_list.convert_calendar("noleap")
                 data_dictionary[variable][model] = ensemble_list.resample(time=self.period).mean()
-                print('successfully loaded', ensemble_list['member'].size, 'ensemble members from', file_path)
+                print('successfully loaded', ii+1, 'ensemble members from', file_path)
 
         return data_dictionary
     
@@ -147,7 +148,6 @@ class DataProcessing():
     # --------------------------- temporal functions --------------------------------
     # -------------------------------------------------------------------------------
     # ---- select_season, smooth_time, rolling_time, sync_time, shift_inout_time ----
-    # ENFORCE NO SMOOTHING AFTER SYNCING (CUTTING THE EDGES WILL LEAD TO SMOOTHING PROBLEMS)
     
     
     def select_season(self, season):
@@ -341,7 +341,6 @@ class DataProcessing():
     # ---------------------------- spatial functions --------------------------------
     # -------------------------------------------------------------------------------
     # --------------------- smooth_space, mask_data, get_region ---------------------
-    # GOOD: MASK, RESAMPLE, REGION OR RESAMPLE, MASK, REGION
 
                 
     def smooth_space(self, resolutions=None):
@@ -509,7 +508,7 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     # ---------------------------- data manipulation --------------------------------
     # -------------------------------------------------------------------------------
-    # --------- remove_seasonality, remove_trend, norm_data, regional_mean ----------
+    # -- remove_seasonality, remove_trend, norm_data, regional_mean, baseline_norm --
 
 
     def remove_seasonality(self, seasonality_dictionary=False):
@@ -525,9 +524,6 @@ class DataProcessing():
         print('removing seasonality from all datasets')
         if seasonality_dictionary:
             self.seasonality_dictionary = {}
-        ####################################################################################
-        # COULD ADD CODE HERE TO REMOVE DIFFERENT TYPES OF 'SEASONALITY' LIKE DAILY CYCLE, ETC.
-        ####################################################################################
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             if seasonality_dictionary: self.seasonality_dictionary[var] = {}
@@ -566,21 +562,31 @@ class DataProcessing():
             if trend_dictionary: self.trend_dictionary[var] = {}
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                ####################################################################################
-                # calculate the trend as the ensemble mean or a fit
                 if fit == 'rolling':
-                    # use a rolling mean over 5 years -- SAME AS BELOW AND WHAT IF NOT ENOUGH TIME TO USE 5 YEARS?
-                    trend = self.data_dictionary[var][model].rolling(time=60, min_periods=1, center=True).mean()
+                    # use a rolling mean over 5 years
+                    if self.period[-1] == 'Y':
+                        assert self.data_dictionary[var][model]["time.year"].size > 5, "too short a time period to take rolling average"
+                        roll = int(5/int(self.period[:-1]))
+                        trend = self.data_dictionary[var][model].mean("member").rolling(time=roll, min_periods=1, center=True).mean()
+                    elif self.period[-1] == 'M':
+                        assert self.data_dictionary[var][model]["time"].size > 60, "too short a time period to take rolling average"
+                        roll = int(60/int(self.period[:-1]))
+                        trend = self.data_dictionary[var][model].mean("member").rolling(time=roll, min_periods=1, center=True).mean()
+                    else:
+                        assert False, "rolling average not implemented for daily data"
                 elif type(fit) == int:
-                    # use 3rd degree polyfit -- FIT EACH MEMBER SEPARATELY OR ALL TOGETHER?
-                    trend = self.data_dictionary[var][model].polyfit(dim="time", deg=fit)
+                    # use fit degree polyfit on the ensemble mean
+                    trend = self.data_dictionary[var][model].mean("member").polyfit(dim="time", deg=fit)
                     trend = xr.polyval(self.data_dictionary[var][model].time, trend)
                 else:
                     # print a note if using ensemble mean for trend with fewer than 10 members
                     if self.data_dictionary[var][model].member.size < 10:
                         print('!! removing trend using ensemble mean with only', self.data_dictionary[var][model].member.size, 'members !!')
+                    if self.data_dictionary[var][model].member.size == 1:
+                        print('single member dataset, skipping trend removal')
+                        continue
                     trend = self.data_dictionary[var][model].mean("member")
-                ####################################################################################
+                
                 if trend_dictionary:
                     # if requested, save the trend in a separate dictionary
                     self.trend_dictionary[var][model] = trend
@@ -638,7 +644,38 @@ class DataProcessing():
                 # get the global mean
                 self.data_dictionary[var][model] = self.data_dictionary[var][model].weighted(weights).mean(("lon", "lat"), skipna=True)
     
-
+    # -------------------------------------------------------------------------------
+    
+    ####################################################################################
+    # ONLY SUPPORTS YEARLY DATA FOR NOW
+    def baseline_norm(self, baseline):
+        """
+        normalize the datasets by a baseline period averaged over time and members.
+        
+        inputs:
+            - baseline: a list of a start and end year for the baseline, e.g. [1951, 1980]
+        outputs:
+            - data_dictionary where each model has been normalized by the mean of the baseline
+            over time and members.
+        """
+        # if data is not yet yearly
+        if self.period[-1] != 'Y':
+            # make dataset yearly
+            self.smooth_time(period='1Y')
+        # for each requested variable
+        for var in var_list:
+            # for each model (get down to the xarray level from the dictionary)
+            for model in self.data_dictionary[var].keys():                
+                # get the time range indices
+                baseline_inds = np.where(np.logical_and(self.data_dictionary[var][model]['time.year'] >= baseline[0], 
+                                             self.data_dictionary[var][model]['time.year'] <= baseline[1]))[0]
+                # baseline mean over time and members
+                baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'])
+                # remove the baseline from the dataset
+                self.data_dictionary[var][model] = self.data_dictionary[var][model] - baseline_mean
+        
+    ####################################################################################
+    
     # -------------------------------------------------------------------------------
     # -------------------------------------------------------------------------------
     # -------------------------------------------------------------------------------
