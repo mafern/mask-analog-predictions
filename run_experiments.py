@@ -153,7 +153,7 @@ class Experiments():
         assert experiment_name not in self.keys, "experiment with that name already exists"
         assert leadtime > 0, "leadtime should be positive for projections"
         assert roll_period > 0 or roll_period is False, "roll_period should positive or False"
-        assert np.isin(mask, ['land', 'ocean', False]), "mask should be 'land' or 'ocean' or False"
+        # assert np.isin(mask, ['land', 'ocean', False]), "mask should be 'land' or 'ocean' or False"
         assert np.isin(data_period, ['daily', 'monthly', 'yearly']), "data_period must be 'daily' or 'monthly' or 'yearly'"
         
         # fill a dictionary with the data split values
@@ -318,9 +318,9 @@ class Experiments():
           'regionmask.defined_regions.srex'
          ]
         # print these out
-        print('user defined regions:\n\n    ', list(user_regions.keys()), '\n\n')
+        print('user defined regions:\n\n', np.sort(list(user_regions.keys())), '\n\n')
         for regionmask_region in regionmask_regions:
-            print(regionmask_region+':\n\n    ', eval(regionmask_region+'.names'), '\n\n')
+            print(regionmask_region+':\n\n', np.sort(eval(regionmask_region+'.names')), '\n\n')
             
     # -------------------------------------------------------------------------------
     
@@ -347,12 +347,13 @@ class Experiments():
         # get list of models and associated variables ----- only looking in monthly for now
         ###################################################################################
         models = glob.glob('raw_data/monthly/*')
-        models = [os.path.basename(models[i]) for i in range(len(models))]
+        models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
         # initialize list
         allvars = []
         for model in models:
             model_vars = glob.glob(os.path.join('raw_data/monthly', model, '*/'))
             model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-            print(model+":", *np.sort(model_vars))
+            n_members = [len(glob.glob(os.path.join('raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
+            print(model+":", *np.sort(model_vars), n_members)
         
         

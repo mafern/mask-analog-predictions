@@ -647,8 +647,8 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     
     ####################################################################################
-    # ONLY SUPPORTS YEARLY DATA FOR NOW
-    def baseline_norm(self, baseline):
+    # ONLY SUPPORTS YEARLY DATA FOR NOW -- add print statement
+    def baseline_norm(self, baseline, var_list=None):
         """
         normalize the datasets by a baseline period averaged over time and members.
         
@@ -662,6 +662,8 @@ class DataProcessing():
         if self.period[-1] != 'Y':
             # make dataset yearly
             self.smooth_time(period='1Y')
+        if var_list is None:
+            var_list = list(self.data_dictionary.keys())
         # for each requested variable
         for var in var_list:
             # for each model (get down to the xarray level from the dictionary)

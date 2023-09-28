@@ -2,6 +2,7 @@ import numpy as np
 import xarray as xr
 import gzip
 import os
+import glob
 import _data_processing as _dp
 import pickle
 from copy import deepcopy
@@ -46,7 +47,7 @@ def process_data(experiment_settings, overwrite_data=False):
             # for each of the different split sets (analog, training, validation, testing)
             with gzip.open(os.path.join("processed_data", experiment_name+'_'+split_set+'.pickle'), "rb") as filename:
                 processed_data[split_set] = pickle.load(filename)
-            print('loading already processed pre-saved', split_set, 'dataset')
+            print('loading pre-saved', split_set, 'dataset')
 
         # if file does not exist, process the data and save
         except:
@@ -100,8 +101,10 @@ def process_data(experiment_settings, overwrite_data=False):
                     output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
                     
                 # now flatten over models
-                current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()], dim="member")
-                current_data["target"][var] = xr.concat([output_raw.data_dictionary[var][model] for model in output_raw.data_dictionary[var].keys()], dim="member")
+                current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()],
+                                                        dim="member", coords="minimal")
+                current_data["target"][var] = xr.concat([output_raw.data_dictionary[var][model] for model in output_raw.data_dictionary[var].keys()],
+                                                        dim="member", coords="minimal")
                 
             # flatten variables into single dataset (if there is more than one variable)
             ###################################################################################
@@ -144,40 +147,49 @@ def neural_network_stack(dataset):
     
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
-    target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
+    target = target.stack(sample=("member", "time")).to_array().transpose("sample", ..., "variable").to_numpy()
     
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target
 
 # -------------------------------------------------------------------------------
 
-def combine_ncs(directory, nfiles, delete_old=False):
+def combine_ncs(directory, delete_old=False):
     """
     combine multiple subfiles into a single nc spanning the full time range.
     assumes that the filenames allow for sorting in the right order, and that
-    they are split amongst the same number of subfiles.
+    the file names end CMIP6 style (ending in time range).
     name will be based on the first and last of these subfiles.
     """
-    all_files = np.sort(glob.glob(os.path.join(directory, '*')))
-    indrange = np.linspace((0, nfiles), (allf.size-nfiles, all_files.size), int(all_files.size/nfiles), dtype=int)
-    for inds in indrange:
-        for ii in range(inds[0], inds[1]):
-            # load each and concat
-            ds = xr.load_dataset(all_files[ii])
-            if ii == inds[0]:
-                ds_complete = ds
-                # file save name start
-                fname_start = all_files[ii][:-9]
-            else:
-                ds_complete = xr.concat([ds_complete, ds], dim="time")
-
-            # optionally delete old files
-            if delete_old:
-                os.remove(all_files[ii])
-        # file save name ending
-        fname_end = all_files[ii][-9:]
-        # save as .nc
-        ds_complete.to_netcdf(path=fname_start+fname_end)
+    # get the files from the requested directory
+    files = np.sort(glob.glob(os.path.join(directory, '*')))
+    # get a list of the files without the dates to identify duplicates (same simulation,
+    # different times) -- could update this to find date-like name part and go from there
+    cut_files = [file[:-16] for file in files]
+    # now loop through the unique simulations and combine and save
+    for file in np.unique(cut_files):
+        # get all the subfile indices corresponding to this simulation
+        simulation_inds = np.where(file == np.array(cut_files))[0]
+        # if multiple subfiles, go through concatenating them together, else skip
+        if np.size(simulation_inds) > 1:
+            # concatenate all the subfiles together
+            for index in simulation_inds:
+                # open, concat, repeat
+                ds = xr.load_dataset(files[index])
+                if index == simulation_inds[0]:
+                    ds_complete = ds
+                    # file save name start
+                    fname_start = files[index][:-9]
+                else:
+                    ds_complete = xr.concat([ds_complete, ds], dim="time")
+                # optionally delete old files
+                if delete_old:
+                    os.remove(files[index])
+            # file save name ending
+            fname_end = files[index][-9:]
+            # save as .nc
+            ds_complete.to_netcdf(path=fname_start+fname_end)
+            print('using indices:', *simulation_inds, 'saving to', fname_start+fname_end)
 
 # -------------------------------------------------------------------------------
 
