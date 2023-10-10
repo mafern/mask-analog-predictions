@@ -21,7 +21,8 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
         print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
         
         ###################################################################################
-        seed = np.arange(0, 100, 10)
+        # seed = np.arange(0, 100, 10)
+        seed = [20,]
         raw_masks, masks = [], []
         for model in models:
         ###################################################################################

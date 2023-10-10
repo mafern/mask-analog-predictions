@@ -54,7 +54,8 @@ class DataProcessing():
                               'regionmask.defined_regions.natural_earth_v5_0_0.countries_10[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.ocean_basins_50[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.us_states_10[box_or_regions]',
-                              'regionmask.defined_regions.srex[box_or_regions]'
+                              'regionmask.defined_regions.srex[box_or_regions]',
+                              'regionmask.defined_regions.natural_earth_v5_0_0.land_10[box_or_regions]'
                              ]
         # save some global variables based on the experiment
         self.period = period[0].upper()

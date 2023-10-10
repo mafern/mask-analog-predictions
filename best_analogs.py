@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as patheffects
 import matplotlib.colors as clr
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import pickle
 import xarray as xr
 import multiprocessing as mp
@@ -29,6 +31,7 @@ red_skyline = ['#FFC72C', '#FF8200', '#FC4C02', '#DC4405', '#862633']
 blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
 nuggets_cmap = clr.LinearSegmentedColormap.from_list('nuggets', blue_skyline+red_skyline, N=256)
 red_cmap = clr.LinearSegmentedColormap.from_list('red skyline', red_skyline, N=256)
+blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
 
 # set some plotting defaults
 plt.rc('xtick',labelsize=14)
@@ -55,42 +58,59 @@ class BestAnalogs():
         self.experiment_name = experiment_name
         ###################################################################################
         # this is the mean mask over all seeds, but if we go with a single instance this needs to change
-        self.mask = xr.load_dataset(os.path.join('saved_masks', experiment_name+'_mask.nc')).squeeze().mean("seed").mask
+        self.mask_object = xr.load_dataset(os.path.join('saved_masks', experiment_name+'_mask.nc'))
+        self.mask = self.mask_object.mean("seed").squeeze().mask
         ###################################################################################
         
+        # get the training, validation, and testing data so they can be avoided in the soi and analogs
+        self.used_members = np.empty(0, dtype=int)
+        self.used_models = np.empty(0, dtype=str)
+        for split in ['training', 'validation', 'testing']:
+            with gzip.open(os.path.join("processed_data", experiment_name+'_'+split+'.pickle'), "rb") as filename:
+                # just getting the models and members, so either inputs or target is sufficient
+                split_data = pickle.load(filename)
+            # concatenate the training data used_models and used_members
+            self.used_members = np.concatenate([self.used_members, split_data['inputs'].member.to_numpy()])
+            self.used_models = np.concatenate([self.used_models, split_data['inputs'].model.to_numpy()])
+        
+        # initialize the projection_data object (lat and lon from the training data)
+        self.projection_data = {}
+        self.projection_data['inputs'] = xr.Dataset()
+        self.projection_data['target'] = xr.Dataset()
+        self.projection_data['lat'] = split_data['lat']
+        self.projection_data['lon'] = split_data['lon']
+            
         try:
             # check if processed projection dataset file already exists by trying to load
             with gzip.open(os.path.join("processed_data", experiment_name+'_projection.pickle'), "rb") as filename:
                 self.projection_data = pickle.load(filename)
         except:
-            # if file does not exist, load the analogs from training
-            with gzip.open(os.path.join("processed_data", experiment_name+'_analog.pickle'), "rb") as filename:
-                self.projection_data = pickle.load(filename)
-            # save this as the starting point for the projection analog library
-            with gzip.open(os.path.join("processed_data", experiment_name+'_projection.pickle'), "wb") as filename:
-                pickle.dump(self.projection_data, filename)
-                
-        # initialize the used_members and use_models arrays with the projection_data
-        self.used_members = self.projection_data['inputs'].member.to_numpy()
-        self.used_models = self.projection_data['inputs'].model.to_numpy()
+            # # if file does not exist, load the analogs from training
+            # with gzip.open(os.path.join("processed_data", experiment_name+'_analog.pickle'), "rb") as filename:
+            #     self.projection_data = pickle.load(filename)
+            # # save this as the starting point for the projection analog library
+            # with gzip.open(os.path.join("processed_data", experiment_name+'_projection.pickle'), "wb") as filename:
+            #     pickle.dump(self.projection_data, filename)
             
-        # get the training, validation, and testing data so they can be avoided in the soi and analogs
-        for split in ['training', 'validation', 'testing']:
-            with gzip.open(os.path.join("processed_data", experiment_name+'_'+split+'.pickle'), "rb") as filename:
-                # just getting the models and members, so either inputs or target is sufficient
-                split_data = pickle.load(filename)['inputs']
-            # concatenate the training data used_models and used_members
-            self.used_members = np.concatenate([self.used_members, split_data.member.to_numpy()])
-            self.used_models = np.concatenate([self.used_models, split_data.model.to_numpy()])
-            ##### SHOULD I SAVE THESE? ONLY IF CALCULATING BECOMES SLOW
-            
-        # call process_new_data with model_list and n_members which will add new data to the dataset
-        if model_list is not None and n_members is not None:
+            # if file does not exist, check that models and members have been passed
+            assert (model_list is not None and n_members is not None), "no analog library, pass models and members to generate" 
+            # start a new file by processing the models/members requested
             self.process_new_data(experiment_name, model_list, n_members, data_period)
-            # and save the new, expanded projection dataset
+            # and save the new projection dataset
             with gzip.open(os.path.join("processed_data", experiment_name+'_projection.pickle'), "wb") as filename:
-                pickle.dump(self.projection_data, filename)
-            
+                pickle.dump(self.projection_data, filename)                
+        else:
+            # if try succeeded, we have a projection dataset, but may want to add more data to it
+            # add the used_members and use_models arrays with the projection_data (avoid saving the same data again)
+            self.used_members = np.concatenate([self.used_members, self.projection_data['inputs'].member.to_numpy()])
+            self.used_models = np.concatenate([self.used_models, self.projection_data['inputs'].model.to_numpy()])
+            # call process_new_data with model_list and n_members which will add new data to the dataset
+            if model_list is not None and n_members is not None:
+                self.process_new_data(experiment_name, model_list, n_members, data_period)
+                # and save the expanded projection dataset
+                with gzip.open(os.path.join("processed_data", experiment_name+'_projection.pickle'), "wb") as filename:
+                    pickle.dump(self.projection_data, filename)
+
         # weight all the input data by the mask
         self.projection_data["inputs"] = self.projection_data["inputs"] * self.mask
         
@@ -113,6 +133,15 @@ class BestAnalogs():
         # if no data_period given, default to previously used
         if data_period is None:
             data_period = experiment_settings['data_period']
+        # remove some of the processing steps that are not necessary for the projection part
+        # (sync_time not needed, shift_inout_time unnecessarily removes dates, regional_mean can be done later)
+        remove_steps = ["sync_time(experiment_settings['time_range'])", "shift_inout_time(-experiment_settings['leadtime'])",
+                        "shift_inout_time(experiment_settings['leadtime'])", "regional_mean(experiment_settings['variable_list'])"]
+        for step in remove_steps:
+            if np.isin(step, experiment_settings['inputs_proc_steps']):
+                experiment_settings['inputs_proc_steps'].remove(step)
+            if np.isin(step, experiment_settings['target_proc_steps']):
+                experiment_settings['target_proc_steps'].remove(step)
         
         # load the new raw data
         for ii, model in enumerate(model_list):
@@ -245,7 +274,7 @@ class BestAnalogs():
         except:
             print('that SOI is not in the already processed projection_data')
             
-        # now remove this particular soi from the analog library
+        # now remove this particular soi member from the analog library
         analog_inds = np.setdiff1d(np.arange(self.projection_data['inputs'].member.size), soi_index)
         weighted_analogs = self.projection_data['inputs'].isel(member=analog_inds)
         
@@ -345,7 +374,7 @@ class BestAnalogs():
                 # try the next best analog
                 next_best = current_time_ds.isel(analog_size=ii)
                 # if there is enough time, get the corresponding target and append it
-                if next_best.best_analog_times <= ntimes-leadstep:
+                if next_best.best_analog_times <= ntimes - leadstep:
                     # get indices for member and time for the target dataset
                     member_ind = np.where(np.logical_and(self.projection_dict['targets'].model == next_best.best_analog_models,
                                                          self.projection_dict['targets'].member == next_best.best_analog_members))[0].item()
@@ -354,18 +383,15 @@ class BestAnalogs():
                 ii += 1
         
             # now get the average of the analogs
-            soi_projection = np.hstack([soi_projection, np.mean(step_analogs, axis=0)])
-            projection_min = np.hstack([projection_min, np.min(step_analogs, axis=0)])
-            projection_max = np.hstack([projection_max, np.max(step_analogs, axis=0)])
+            soi_projection = np.hstack([soi_projection, np.nanmean(step_analogs, axis=0)])
+            projection_min = np.hstack([projection_min, np.nanmin(step_analogs, axis=0)])
+            projection_max = np.hstack([projection_max, np.nanmax(step_analogs, axis=0)])
             
         # get the soi (aka the truth)
         soi_ind = np.where((self.projection_dict['targets'].model == current_time_ds.soi_model.data) &
                            (self.projection_dict['targets'].member == current_time_ds.soi_member.data))[0]
         truth = self.projection_dict['targets'].isel(member=soi_ind)[variable].data.squeeze()
         
-        ###########################################################################################
-        # save the resulting projection? pretty fast to compute individually, but for lots . . .
-        ###########################################################################################
         return(truth, soi_projection[:ntimes], projection_min[:ntimes], projection_max[:ntimes])
     
 # -------------------------------------------------------------------------------
@@ -384,16 +410,16 @@ class BestAnalogs():
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of all analogs
-        ax.fill_between(self.projection_dict['indices']['soi_time.year'], all_min, all_max, color=c_skyline,
+        ax.fill_between(self.projection_dict['targets']['time.year'], all_min, all_max, color=c_skyline,
                          alpha=0.4, label='all analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline)])
         # plot the range of all the best analogs
-        ax.fill_between(self.projection_dict['indices']['soi_time.year'], projection_min, projection_max, color=c_flatirons,
+        ax.fill_between(self.projection_dict['targets']['time.year'], projection_min, projection_max, color=c_flatirons,
                          alpha=0.3, label='best analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flatirons)])
         # plot the true values (i.e. the soi target)
-        ax.plot(self.projection_dict['indices']['soi_time.year'], truth, lw=3.33, c=c_midnight, label='truth',
+        ax.plot(self.projection_dict['targets']['time.year'], truth, lw=3.33, c=c_midnight, label='truth',
                  path_effects=[patheffects.withStroke(linewidth=5, foreground='white')])
         # plot the projection
-        ax.plot(self.projection_dict['indices']['soi_time.year'], projection, label='best analogs ('+str(n_analogs)+')',
+        ax.plot(self.projection_dict['targets']['time.year'], projection, label='best analogs ('+str(n_analogs)+')',
                  lw=3.33, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
 
         # legend, labels, etc.
@@ -403,7 +429,7 @@ class BestAnalogs():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=4, frameon=False, mode='expand',
                         prop={'weight':'bold', 'size':'15'})
 
-        ax.set_xlabel('year', fontsize=18)
+        ax.set_xlabel('prediction year', fontsize=18)
         ax.set_ylabel(settings['region']+'\n'+variable, fontsize=18)
         ax.set_title(self.experiment_name, fontsize=18)
 
@@ -435,16 +461,16 @@ class BestAnalogs():
 
         # top panel -- truth, projection, analog ranges
         # plot the range of all analogs
-        ax[0].fill_between(self.projection_dict['indices']['soi_time.year'], all_min, all_max, color=c_skyline,
+        ax[0].fill_between(self.projection_dict['targets']['time.year'], all_min, all_max, color=c_skyline,
                          alpha=0.4, label='all analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline)])
         # plot the range of all the best analogs
-        ax[0].fill_between(self.projection_dict['indices']['soi_time.year'], projection_min, projection_max, color=c_flatirons,
+        ax[0].fill_between(self.projection_dict['targets']['time.year'], projection_min, projection_max, color=c_flatirons,
                          alpha=0.3, label='best analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flatirons)])
         # plot the true values (i.e. the soi target)
-        ax[0].plot(self.projection_dict['indices']['soi_time.year'], truth, lw=3.33, c=c_midnight, label='truth',
+        ax[0].plot(self.projection_dict['targets']['time.year'], truth, lw=3.33, c=c_midnight, label='truth',
                  path_effects=[patheffects.withStroke(linewidth=5, foreground='white')])
         # plot the projection
-        ax[0].plot(self.projection_dict['indices']['soi_time.year'], projection, label='best analogs ('+str(n_analogs)+')',
+        ax[0].plot(self.projection_dict['targets']['time.year'], projection, label='best analogs ('+str(n_analogs)+')',
                  lw=3.33, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
         # top panel settings
         ax[0].set_title(self.experiment_name, fontsize=18)
@@ -469,7 +495,7 @@ class BestAnalogs():
         handles, labels = ax[1].get_legend_handles_labels()
         handles = [copy.copy(ha) for ha in handles]
         # [ha.set_alpha(0.7) for ha in handles[:2]]
-        leg = ax[1].legend(handles=handles, labels=labels, loc='lower left', ncols=4, frameon=False, mode='expand',
+        leg = ax[1].legend(handles=handles, labels=labels, loc='best', ncols=4, frameon=False, mode='expand',
                         prop={'weight':'bold', 'size':'15'})
         # bottom panel settings
         ax[1].spines['left'].set_visible(False)
@@ -485,7 +511,7 @@ class BestAnalogs():
         plt.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
         plt.grid(False)
         plt.ylabel(settings['region']+'\n'+variable, fontsize=20, labelpad=5)
-        plt.xlabel('year', size=20, labelpad=-30)
+        plt.xlabel('prediction year', size=20, labelpad=-30)
 
         plt.subplots_adjust(hspace=0.2)
         plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0)
@@ -504,7 +530,7 @@ class BestAnalogs():
         _, _, pmin, pmax = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep)
         range_diff = (all_max - pmax) + (pmin - all_min)
         # interpolate so it can be divided at zero by color -- probably a better way, but this works for now
-        x = self.projection_dict['indices']['soi_time.year']
+        x = self.projection_dict['targets']['time.year']
         newx = np.linspace(x.min(), x.max(), x.size**2)
         newy = np.interp(newx, x, range_diff)
         # make the figure
@@ -518,7 +544,7 @@ class BestAnalogs():
                 lw=2.5, c=c_skyline, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         leg = ax.legend(loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         
-        ax.set_xlabel('year', fontsize=18)
+        ax.set_xlabel('prediction year', fontsize=18)
         ax.set_ylabel(settings['region']+'\n'+variable, fontsize=18)
         ax.set_title(self.experiment_name, fontsize=18)
         ax.spines['right'].set_visible(False)
@@ -585,7 +611,8 @@ class BestAnalogs():
         soi_index = np.where((self.projection_dict['indices'].soi_model == soi_model) * 
                              (self.projection_dict['indices'].soi_member == soi_member))[0][0]
         # get the times for the soi
-        times = self.projection_dict['indices'].isel(soi_index=soi_index)['soi_time.year']
+        # times = self.projection_dict['indices'].isel(soi_index=soi_index)['soi_time.year']
+        times = self.projection_dict['targets']['time.year']
         # get the models that were selected for the analogs of this soi
         selected_model = self.projection_dict['indices'].isel(soi_index=soi_index).best_analog_models[:, :n_analogs]
         # get the names of the models that were selected for this soi across all times
@@ -601,7 +628,7 @@ class BestAnalogs():
 
         ax.set_yticks(np.arange(models.size), models)
         ax.set_xlim([times.min()-2, times.max()+2])
-        ax.set_xlabel('year', fontsize=18)
+        ax.set_xlabel('prediction year', fontsize=18)
         ax.set_title(self.experiment_name+': '+str(soi_model)+' member '+str(soi_member), fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -612,6 +639,34 @@ class BestAnalogs():
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
 
+        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0)
+        plt.show()
+
+# -------------------------------------------------------------------------------
+
+    def plot_mask(self, vmin=None, vmax=None, savename=None):
+        if savename is None:
+            savename = self.experiment_name+'_mask.png'
+            
+        fig = plt.figure(figsize=(9, 9))
+        ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=215.))
+        data_crs = ccrs.PlateCarree()
+        
+        land_feature = cfeature.NaturalEarthFeature(
+            category='physical',
+            name='land',
+            scale='110m',
+            facecolor='none',
+            edgecolor='k',
+            linewidth=1.5,
+        )
+        ax.add_feature(land_feature)
+        ax.set_title(self.experiment_name, fontsize=18)
+
+        image = ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, self.mask_object.raw_mask.mean(axis=0),
+                              transform=data_crs, cmap=blue_cmap, vmin=vmin, vmax=vmax)
+        cb = plt.colorbar(image, shrink=0.75, orientation="horizontal", pad=0.02)
+        
         plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0)
         plt.show()
 

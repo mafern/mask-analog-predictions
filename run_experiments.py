@@ -251,7 +251,8 @@ class Experiments():
         # when showing it keep the seeds separate to show lack fo variance
         # will also need to change the make_mask.py code to remove multiple seeds
         models = []
-        for seed in range(0, 100, 10):
+        # for seed in range(0, 100, 10):
+        for seed in [20]:
             experiment_settings["seed"] = seed
         ###################################################################################
         
@@ -315,7 +316,8 @@ class Experiments():
           'regionmask.defined_regions.natural_earth_v5_0_0.countries_10',
           'regionmask.defined_regions.natural_earth_v5_0_0.ocean_basins_50',
           'regionmask.defined_regions.natural_earth_v5_0_0.us_states_10',
-          'regionmask.defined_regions.srex'
+          'regionmask.defined_regions.srex',
+          'regionmask.defined_regions.natural_earth_v5_0_0.land_10'
          ]
         # print these out
         print('user defined regions:\n\n', np.sort(list(user_regions.keys())), '\n\n')
