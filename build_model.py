@@ -114,7 +114,7 @@ def make_dissimilarity_model(x_train):
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-# Third, creating the model that uses the dissimilarity score to predict the dissimilarity of the maps 5 years later
+# Third, creating the model that uses the dissimilarity score to predict the dissimilarity of the maps x years later
 def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
     ""
     

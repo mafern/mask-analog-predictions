@@ -193,6 +193,39 @@ def combine_ncs(directory, delete_old=False):
 
 # -------------------------------------------------------------------------------
 
+def combine_hist_ssp(directory, delete_old=False, grid='gn'):
+    """
+    combine multiple historical and ssp subfiles into a single nc spanning the full time range.
+    assumes that the filenames allow for sorting in the right order, and that
+    the file names end CMIP6 style (ending in time range).
+    """
+    # get the files from the requested directory
+    files = np.sort(glob.glob(os.path.join(directory, '*')))
+    # get a list of the member ids without the dates to identify matching historical and ssp runs
+    mem_ids = np.array([file[file.find('_r')+1:file.find('_'+grid)] for file in files])
+    # go through each file and find match, concatenate, save, optionally delete separate files
+    for ii, file in enumerate(files):
+        if 'historical' in file:
+            non_ii_inds = np.setdiff1d(np.arange(mem_ids.size), ii)
+            # add one since we remove the current index above (it's ok, we are always looking forward)
+            ssp_ind = np.where(mem_ids[ii] == mem_ids[non_ii_inds])[0] + 1
+            if np.size(ssp_ind) != 0:
+                # now load the two datasets
+                hist = xr.load_dataset(files[ii])
+                ssp = xr.load_dataset(files[ssp_ind][0])
+                combined = xr.concat([hist, ssp], dim='time')
+                # get the file name
+                fname_start = files[ssp_ind][0][:-16]
+                fname_mid = files[ii][-16:-9]
+                fname_end = files[ssp_ind][0][-9:]
+                # save the combined file
+                combined.to_netcdf(path=fname_start+fname_mid+fname_end)
+                if delete_old:
+                    os.remove(files[ii])
+                    os.remove(files[ssp_ind][0])
+
+# -------------------------------------------------------------------------------
+
 def make_model_masks(file):
     """
     using a land-only variable, make a mask for the given model.

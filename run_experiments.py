@@ -246,6 +246,14 @@ class Experiments():
          lat, lon) = self.get_experiment_data(experiment_name, overwrite_data=overwrite_data)
         
         ###################################################################################
+        #### reshape for multiple variables, since tensorflow flatten wants it this way
+        analog_inputs = np.transpose(analog_inputs, (0, 3, 1, 2))
+        training_inputs = np.transpose(training_inputs, (0, 3, 1, 2))
+        validation_inputs = np.transpose(validation_inputs, (0, 3, 1, 2))
+        testing_inputs = np.transpose(testing_inputs, (0, 3, 1, 2))
+        ###################################################################################
+        
+        ###################################################################################
         # do i want to do multiple seeds? not for most of the results, as it doesn't matter
         # very much -- will want to show this though, so keep this code commented out, and
         # when showing it keep the seeds separate to show lack fo variance

@@ -16,6 +16,7 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
         
         # get lat and lon
         lat, lon = processed_data['analog']['lat'], processed_data['analog']['lon']
+        vars = np.array(processed_data['analog']['inputs'].data_vars)
         
         print('----------------------------------------------------------------')
         print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
@@ -29,10 +30,10 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
         
             # Get both the raw and scaled (masked, scale to mean=1) mask and save as a netcdf file
             raw_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
-            raw_mask = raw_mask.reshape(lat.size, lon.size).squeeze()
+            raw_mask = raw_mask.reshape(vars.size, lat.size, lon.size)
 
             # get land or ocean mask (or neither)
-            geomask = processed_data['analog']['land_ocean_mask'].to_numpy().squeeze()
+            geomask = processed_data['analog']['land_ocean_mask'].to_numpy()
             mask = scale_mask(raw_mask, geomask)
             
             ###################################################################################
@@ -41,12 +42,22 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
             ###################################################################################
         
         # save the mask as netcdf with lat and lon coordinates (raw and scaled)
+        data_var_dict = {}
+        for ii, var in enumerate(vars):
+            data_var_dict[var] = (["seed", "lat", "lon"], np.array(masks)[:, ii])
         mask = xr.Dataset(
-            data_vars=dict(mask=(["seed", "lat", "lon"], masks),
-                          raw_mask=(["seed", "lat", "lon"], raw_masks)),
-            coords=dict(lat=lat, lon=lon, seed=seed)
+            data_vars=data_var_dict,
+            coords=dict(seed=seed, lat=lat, lon=lon)
         )
         mask.to_netcdf(os.path.join('saved_masks', experiment_name+'_mask.nc'))
+        data_var_dict = {}
+        for ii, var in enumerate(vars):
+            data_var_dict[var] = (["seed", "lat", "lon"], np.array(raw_masks)[:, ii])
+        mask = xr.Dataset(
+            data_vars=data_var_dict,
+            coords=dict(seed=seed, lat=lat, lon=lon)
+        )
+        mask.to_netcdf(os.path.join('saved_masks', experiment_name+'_raw_mask.nc'))
     
     # no need to get data, build/train model, or make/save mask -- just load the existing mask
     else:

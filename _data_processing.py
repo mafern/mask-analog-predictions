@@ -610,8 +610,8 @@ class DataProcessing():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
                 # get mean and std over all members and times
-                model_mean = self.data_dictionary[var][model].mean(["member", "time"])
-                model_std = self.data_dictionary[var][model].std(["member", "time"])
+                model_mean = self.data_dictionary[var][model].mean(["member", "time"], skipna=True)
+                model_std = self.data_dictionary[var][model].std(["member", "time"], skipna=True)
                 # standardize the datasets
                 self.data_dictionary[var][model] = (self.data_dictionary[var][model] - model_mean) / model_std
 
@@ -673,7 +673,8 @@ class DataProcessing():
                 baseline_inds = np.where(np.logical_and(self.data_dictionary[var][model]['time.year'] >= baseline[0], 
                                              self.data_dictionary[var][model]['time.year'] <= baseline[1]))[0]
                 # baseline mean over time and members
-                baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'])
+                ############ baseline each member separately ##############
+                baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'], skipna=True)
                 # remove the baseline from the dataset
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] - baseline_mean
         
