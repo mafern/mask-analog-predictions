@@ -7,6 +7,10 @@ __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
 
 
+# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+
+
+
 # def parse_model(x_input, mask_model, dissimilarity_model, prediction_model):
     
 #     weighted_soi, weighted_analog, weights = mask_model(x_input)

@@ -1,3 +1,0 @@
-[submodule "mask-analog"]
-	path = mask-analog
-	url = git@github.com:jaminrader/WeightedMaskAnalogForecasting.git

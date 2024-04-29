@@ -15,6 +15,14 @@ import regionmask
 import json
 
 
+# change window (make an option) (see Yeager 2018)
+
+# get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
+
+# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+
+
+
 ####################################################################################
 def route_by_filetype(file_type, file):
     # call appropriate loading function: xarray for .nc, .hdf, .grib
@@ -49,7 +57,7 @@ class DataProcessing():
                                  4: "apr", 5: "may", 6: "jun",
                                  7: "jul", 8: "aug", 9: "sep",
                                  10: "oct", 11: "nov", 12: "dec"}
-        self.user_regions = json.load(open('regions.json', 'r'))
+        self.user_regions = json.load(open(os.path.join(os.path.dirname(__file__), 'regions.json'), 'r'))
         self.regionmask_regions = ['regionmask.defined_regions.ar6.all[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.countries_10[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.ocean_basins_50[box_or_regions]',
@@ -97,7 +105,7 @@ class DataProcessing():
             
             for model in model_list:
                 # file path for this variable and model
-                file_path = os.path.join('raw_data', period, model, variable)
+                file_path = os.path.join(os.path.dirname(__file__), 'raw_data', period, model, variable)
                 # check that path exists, if not print warning and continue
                 if not os.path.exists(file_path):
                     print('directory:', file_path, 'does not exist')
@@ -135,6 +143,8 @@ class DataProcessing():
                         np.max([np.diff(ens_member.lat[:2])[0], self.attr_dictionary[variable]["res"][0]]), 
                         np.max([np.diff(ens_member.lon[:2])[0], self.attr_dictionary[variable]["res"][1]])
                     ]
+
+                    ens_member.close()
 
                 # add model to the dictionary
                 # resample step is to align data types and should not change anything meaningful
@@ -278,6 +288,28 @@ class DataProcessing():
                 #############################################################################################################
 
         print('rolling average applied, now', self.data_dictionary[var][model].time.size, 'time steps')
+
+    # -------------------------------------------------------------------------------
+    
+    def window_time(self, window):
+        """
+        recast target data as rolling average over window of the current time steps.
+        
+        inputs:
+            - window: number of current time steps to average over.
+        outputs:
+            - data_dictionary with rolling averaged time steps
+        """
+        assert window != 0, "window cannot be over 0 periods, use positive integer"
+        print('applying window over', window, self.period, 'periods')
+        # for each variable in the dataset
+        for var in self.data_dictionary.keys():
+            # for each model (get down to the xarray level from the dictionary)
+            for model in self.data_dictionary[var].keys():
+                # rolling average over roll_period for the current time period of the data
+                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=window, center=True).mean().dropna("time", how="all")
+
+        print('target windowed applied, now', self.data_dictionary[var][model].time.size, 'time steps')
     
     # -------------------------------------------------------------------------------
     
@@ -312,14 +344,15 @@ class DataProcessing():
     
     # -------------------------------------------------------------------------------
     
-    def shift_inout_time(self, shift):
+    def shift_inout_time(self, shift, window=1):
         """
         shift the datasets, i.e. create a leadtime by removing entries from the start or end.
         
         inputs:
             - shift: the number of entries to remove.
-            negative values remove shift entries from the end (adding a lag),
-            positive values remove shift entries from the start (adding a lead).
+            negative values remove shift entries from the end (adding a lag, for input),
+            positive values remove shift entries from the start (adding a lead, for target).
+            - window: the window over which the target is being averaged.
         outputs:
             - shifted data_dictionary.
         """
@@ -331,9 +364,9 @@ class DataProcessing():
                 for model in self.data_dictionary[var].keys():
                     # drop the first or last shift entries in the datasets
                     if shift > 0:
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(shift))
+                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(shift - np.floor(window/2).astype(int)))
                     else:
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(shift))+1))
+                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(shift) + np.floor(window/2).astype(int)) + 1))
         
         print('data shifted, now using', self.data_dictionary[var][model].time.size, 'time steps')
     
@@ -403,7 +436,7 @@ class DataProcessing():
                 # try loading model specific mask first
                 try:
                     # load map for this model
-                    model_mask = xr.load_dataset(os.path.join('raw_data', self.period_long, model, mask+'mask.nc'))
+                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data', self.period_long, model, mask+'mask.nc'))
                     # if the current resolution is different from default (does not match saved mask)
                     if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
                         # adjust the resolution of the mask to be the same as the model and variable
@@ -659,10 +692,10 @@ class DataProcessing():
             - data_dictionary where each model has been normalized by the mean of the baseline
             over time and members.
         """
-        # if data is not yet yearly
-        if self.period[-1] != 'Y':
-            # make dataset yearly
-            self.smooth_time(period='1Y')
+        # # if data is not yet yearly
+        # if self.period[-1] != 'Y':
+        #     # make dataset yearly
+        #     self.smooth_time(period='1Y')
         if var_list is None:
             var_list = list(self.data_dictionary.keys())
         # for each requested variable
@@ -673,7 +706,7 @@ class DataProcessing():
                 baseline_inds = np.where(np.logical_and(self.data_dictionary[var][model]['time.year'] >= baseline[0], 
                                              self.data_dictionary[var][model]['time.year'] <= baseline[1]))[0]
                 # baseline mean over time and members
-                ############ baseline each member separately ##############
+                ############ switch to baseline each member separately, add monthly check and baseline by months if so ##############
                 baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'], skipna=True)
                 # remove the baseline from the dataset
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] - baseline_mean

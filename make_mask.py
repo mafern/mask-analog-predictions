@@ -11,13 +11,12 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
     description
     """
     # check if mask already exists and no overwrite has been requested
-    if not os.path.exists(os.path.join('saved_masks', experiment_name+'_mask.nc')) or overwrite_mask is True:
+    if not os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')) or overwrite_mask is True:
         # either mask does not exist, or overwrite has been requested
         
         # get lat and lon
         lat, lon = processed_data['analog']['lat'], processed_data['analog']['lon']
         vars = np.array(processed_data['analog']['inputs'].data_vars)
-        
         print('----------------------------------------------------------------')
         print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
         
@@ -49,7 +48,7 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
             data_vars=data_var_dict,
             coords=dict(seed=seed, lat=lat, lon=lon)
         )
-        mask.to_netcdf(os.path.join('saved_masks', experiment_name+'_mask.nc'))
+        mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         data_var_dict = {}
         for ii, var in enumerate(vars):
             data_var_dict[var] = (["seed", "lat", "lon"], np.array(raw_masks)[:, ii])
@@ -57,12 +56,12 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
             data_vars=data_var_dict,
             coords=dict(seed=seed, lat=lat, lon=lon)
         )
-        mask.to_netcdf(os.path.join('saved_masks', experiment_name+'_raw_mask.nc'))
+        mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
     
     # no need to get data, build/train model, or make/save mask -- just load the existing mask
     else:
         print('loading pre-saved mask')
-        mask = xr.load_dataset(os.path.join('saved_masks', experiment_name+'_mask.nc')).squeeze()
+        mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')).squeeze()
         
     return mask
 

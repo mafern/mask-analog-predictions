@@ -1,7 +1,3 @@
-"""Train the models.
-
-"""
-
 import time
 import numpy as np
 import silence_tensorflow.auto
@@ -25,6 +21,13 @@ __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
 
 
+
+# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+
+# try sample weighting on the target distance (inverse)
+
+
+
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
     ""
     # random seed to select random subsets of the soi and analog sets
@@ -46,7 +49,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
     experiment_name = settings['experiment_name']
     seed = settings['seed']
     # check if model already exists or overwrite is on
-    if not (os.path.exists(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5")) and os.path.exists(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model"))) or overwrite_model is True:
+    if not (os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5")) and os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model"))) or overwrite_model is True:
         # model is not already saved or overwrite has been requested, so train and save model
     
         # EARLY STOPPING
@@ -133,7 +136,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         # load model
         model = load_model(settings)
         # load history
-        with open(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), 'rb') as file:
+        with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), 'rb') as file:
             history = pickle.load(file)
         # for loaded model, just return the losses
         fit_summary = {
@@ -166,13 +169,13 @@ def save_model_run(model, settings):
     try:
         with warnings.catch_warnings():  # catch very annoying tf warnings
             warnings.simplefilter("ignore")
-            tf.keras.models.save_model(model, os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model"), overwrite=True)
+            tf.keras.models.save_model(model, os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model"), overwrite=True)
     except:
         print('unable to save the model, skipping saving the full model.')
 
-    model.save_weights(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5"))
+    model.save_weights(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5"))
 
-    with open(os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), "wb") as handle:
+    with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), "wb") as handle:
         pickle.dump(model.history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # -------------------------------------------------------------------------------
@@ -180,12 +183,6 @@ def save_model_run(model, settings):
 def load_model(settings):
     experiment_name = settings['experiment_name']
     seed = settings['seed']
-    model_savename = os.path.join('saved_models', experiment_name, experiment_name+str(seed)+"_model")
+    model_savename = os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model")
     model = tf.keras.models.load_model(model_savename, compile=False)
     return model
-
-###################################################################################
-# -------------------------------------------------------------------------------
-# CREATE ADDIITONAL PLOTS AND METRICS
-    # plots.plot_history(settings, history)
-###################################################################################

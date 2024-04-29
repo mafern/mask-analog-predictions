@@ -45,7 +45,7 @@ def process_data(experiment_settings, overwrite_data=False):
             
             # try loading pickle files which are dictionaries with both inputs and target
             # for each of the different split sets (analog, training, validation, testing)
-            with gzip.open(os.path.join("processed_data", experiment_name+'_'+split_set+'.pickle'), "rb") as filename:
+            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle'), "rb") as filename:
                 processed_data[split_set] = pickle.load(filename)
             print('loading pre-saved', split_set, 'dataset')
 
@@ -127,7 +127,7 @@ def process_data(experiment_settings, overwrite_data=False):
                 current_data['land_ocean_mask'] = xr.DataArray(data=1)
                 
             # save processed data in pickle format
-            with gzip.open(os.path.join("processed_data", experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
+            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
                 pickle.dump(current_data, filename)
 
             # update dictionary to return
@@ -139,15 +139,13 @@ def process_data(experiment_settings, overwrite_data=False):
 
 def neural_network_stack(dataset):
     "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
-    # remove bnds dimension, replace NaNs with zeros
-    # inputs = dataset['inputs'].drop_dims("bnds").fillna(0)
-    # target = dataset['target'].drop_dims("bnds").fillna(0)
+    # replace NaNs with zeros
     inputs = dataset['inputs'].fillna(0)
     target = dataset['target'].fillna(0)
-    
+
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
-    target = target.stack(sample=("member", "time")).to_array().transpose("sample", ..., "variable").to_numpy()
+    target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
     
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target

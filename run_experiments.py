@@ -41,7 +41,7 @@ class Experiments():
         # load the dictionary and keys
         try:
             self.filename = filename
-            self.experiments = json.load(open(self.filename, 'r'))
+            self.experiments = json.load(open(os.path.join(os.path.dirname(__file__), self.filename), 'r'))
             self.keys = list(self.experiments.keys())
         except ValueError:
             print("No experiment file found: ", self.filename)
@@ -80,7 +80,7 @@ class Experiments():
 
     def save_backup(self, filename="experiments-backup.json"):
         "save a backup file!"
-        with open(filename, "w") as exp_file:
+        with open(os.path.join(os.path.dirname(__file__), filename), "w") as exp_file:
             exp_file.write(json.dumps(self.experiments))
             
     # -------------------------------------------------------------------------------
@@ -88,16 +88,16 @@ class Experiments():
     def restore_from_backup(self, backupfile, *, confirm=0):
         "Overwrite the main saved file with the dictionary in the backup file"
         if confirm == 1: # just to make sure
-            backup = json.load(open(backupfile, 'r'))
-            with open(self.filename, "w") as exp_file:
+            backup = json.load(open(os.path.join(os.path.dirname(__file__), backupfile), 'r'))
+            with open(os.path.join(os.path.dirname(__file__), self.filename), "w") as exp_file:
                 exp_file.write(json.dumps(backup))
-            self.experiments = json.load(open(self.filename, 'r'))
+            self.experiments = json.load(open(os.path.join(os.path.dirname(__file__), self.filename), 'r'))
         else:
             print("must pass confirm=1 to overwrite main file with backup")
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=0):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=0):
         ###################################################################################
         # COULD ADD PROCESSING_ORDER INPUT THAT OVERRIDES DEFAULT ORDER
         
@@ -126,6 +126,7 @@ class Experiments():
                 - output_period: either resample the data to a new period (pass a string such as "2M"), resample on the same period (pass None) or do nothing (pass False, default)
                 - data_period: string containing the period for the raw data, should be 'daily' or 'monthly' (default) or 'yearly'
                 - roll_period: calculate rolling mean for the data (pass a positive integer for number of time steps to roll), or do nothing (pass False, default)
+                - window: calculate rolling mean for the target data only
                 - resolutions: resample spatial grid of data, either to coarsest resolution amongst models (pass None, default), to a specified resolution (pass a list [lat_res, lon_res]), or do nothing (pass False)
                 - season: calculate a yearly season from the data (pass a list with entries [season_length, season_start]), or do nothing (pass False, default)
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
@@ -170,7 +171,7 @@ class Experiments():
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(experiment_settings['roll_period'])": roll_period,
-                               "shift_inout_time(-experiment_settings['leadtime'])": leadtime,
+                               "shift_inout_time(-experiment_settings['leadtime'], experiment_settings['window'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
@@ -184,7 +185,8 @@ class Experiments():
                                "regional_mean(experiment_settings['variable_list'])": avg_target,
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(-experiment_settings['roll_period'])": roll_period,
-                               "shift_inout_time(experiment_settings['leadtime'])": leadtime,
+                               "window_time(experiment_settings['window'])": window,
+                               "shift_inout_time(experiment_settings['leadtime'], experiment_settings['window'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
@@ -221,6 +223,13 @@ class Experiments():
         experiment_settings = self.get_experiment(experiment_name)
         # make or load the data for this experiment
         self.processed_data = dp.process_data(experiment_settings, overwrite_data=overwrite_data)
+        # remove bnds dimension, if it exists
+        for key in self.processed_data.keys():
+            for inputs_target in ['inputs', 'target']:
+                try:
+                    self.processed_data[key][inputs_target] = self.processed_data[key][inputs_target].drop_dims(["bnds", "nbnd"])
+                except:
+                    pass
         print('----------------------------------------------------------------')
         # stack/separate into inputs and target for the analog, training, validation, and testing sets
         analog_inputs, analog_target = dp.neural_network_stack(self.processed_data['analog'])
@@ -318,7 +327,7 @@ class Experiments():
     def list_regions(self):
         "list the available regions in the user defined json file and in the regionmask package"
         # get all available regions
-        user_regions = json.load(open('regions.json', 'r'))
+        user_regions = json.load(open(os.path.join(os.path.dirname(__file__), 'regions.json'), 'r'))
         import regionmask
         regionmask_regions = ['regionmask.defined_regions.ar6.all',
           'regionmask.defined_regions.natural_earth_v5_0_0.countries_10',
@@ -356,14 +365,15 @@ class Experiments():
         ###################################################################################
         # get list of models and associated variables ----- only looking in monthly for now
         ###################################################################################
-        models = glob.glob('raw_data/monthly/*')
+        resolution_dictionary = {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81]}
+        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/*'))
         models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
         # initialize list
         allvars = []
         for model in models:
-            model_vars = glob.glob(os.path.join('raw_data/monthly', model, '*/'))
+            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, '*/'))
             model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-            n_members = [len(glob.glob(os.path.join('raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
-            print(model+":", *np.sort(model_vars), n_members)
+            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
+            print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[model])
         
         
