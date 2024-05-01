@@ -24,6 +24,8 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
         # seed = np.arange(0, 100, 10)
         seed = [20,]
         raw_masks, masks = [], []
+        if models is not list:
+            models = [models,]
         for model in models:
         ###################################################################################
         

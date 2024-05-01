@@ -425,9 +425,9 @@ class BestAnalogs():
                     member_ind = np.where(np.logical_and(self.projection_dict['target'].model == next_best.best_analog_models,
                                                          self.projection_dict['target'].member == next_best.best_analog_members))[0].item()
                     time_inds = np.arange(next_best.best_analog_times+leadtime, next_best.best_analog_times+leadtime+leadstep)
-                    # and check if the target is nans
+                    # and check if the target is all nans
                     proposed_target = self.projection_dict['target'].isel(time=time_inds, member=member_ind)[variable]
-                    if ~np.isnan(np.nanmean(proposed_target)):
+                    if ~np.all(np.isnan(proposed_target)):
                         # now convert to global mean if requested (projections)
                         if global_mean:
                             proposed_target = proposed_target.weighted(weights).mean(("lon", "lat"), skipna=True)
@@ -472,23 +472,19 @@ class BestAnalogs():
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
 
         # now make the plot
-        fig, ax = plt.subplots(1, 1, figsize=(32,5))
+        fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of all analogs
-        # ax.fill_between(self.projection_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
-        #                  alpha=0.33, label='all analogs', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
+        ax.fill_between(self.projection_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
+                         alpha=0.33, label='all analogs', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # # plot the range of all the best analogs
         # ax.fill_between(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection_min[:ntimes], projection_max[:ntimes], color=c_flatirons,
         #                  alpha=0.3, label='best analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flatirons)])
         # plot the projection
-        # ax.plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection[:ntimes], label='analog prediction ('+str(n_analogs)+')',
-        #          lw=3.33, c=c_skyline_l, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
-        ax.plot(projection[:ntimes], label='analog prediction ('+str(n_analogs)+')', alpha=0.4,
-                 lw=3.33, c=c_skyline_l, path_effects=[patheffects.withStroke(linewidth=5, foreground="k", alpha=0.4)])
+        ax.plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection[:ntimes], label='analog prediction ('+str(n_analogs)+')',
+                 lw=3, c=c_skyline_l, path_effects=[patheffects.withStroke(linewidth=4.66, foreground="k")])
         # plot the true values (i.e. the soi target)
-        # ax.plot(self.projection_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
-        #          path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
-        ax.plot(truth[:ntimes], lw=0.75, c='white', label='truth', alpha=0.4,
-                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight, alpha=0.4)])
+        ax.plot(self.projection_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
 
         # legend, labels, etc.
         handles, labels = ax.get_legend_handles_labels()
@@ -648,6 +644,7 @@ class BestAnalogs():
         model_counts = np.unique(selected_model, return_counts=True)[1]
         sorted = np.argsort(model_counts)[::-1]
         models = models[sorted]
+        model_counts = model_counts[sorted]
 
         # convert selected models to integers
         selected_model_int = np.zeros(selected_model.shape, dtype=int)
@@ -659,7 +656,7 @@ class BestAnalogs():
         # make the plot
         fig, ax = plt.subplots(1, 1, figsize=(np.min([models.size, 10]), 5))
         # histogram, stacked across ranking of analog (best, second best, etc.)
-        n, bins, patches = ax.hist(selected_model_int, stacked=True, bins=models.size, density=True,)
+        n, bins, patches = ax.hist(selected_model_int, stacked=True, bins=np.arange(models.size+1), density=True,)
         # get the bin centers for placing the labels and coloring
         bin_centers = 0.5 * (bins[:-1] + bins[1:])
         # the relevant bins are those with non-zero entries
@@ -714,6 +711,7 @@ class BestAnalogs():
         model_counts = np.unique(selected_model, return_counts=True)[1]
         sorted = np.argsort(model_counts)[::-1]
         models = models[sorted]
+        model_counts = model_counts[sorted]
 
         # convert selected models to integers
         selected_model_int = np.zeros([selected_model.shape[0], models.size], dtype=int)
@@ -856,7 +854,6 @@ class BestAnalogs():
         if savename is None:
             savename = self.experiment_name+'_mask.png'
 
-        # for ii in range(np.array(self.mask_object.data_vars).size):
         for var in np.array(self.mask_object.data_vars):
             
             fig = plt.figure(figsize=(9, 9))
@@ -873,8 +870,6 @@ class BestAnalogs():
             )
             ax.add_feature(land_feature)
 
-            # image = ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, self.mask_object.raw_mask.mean(axis=0)[ii],
-            #                     transform=data_crs, cmap=blue_cmap, vmin=vmin, vmax=vmax)
             image = ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, self.mask_object[var].mean(axis=0),
                                   transform=data_crs, cmap=cmap, vmin=vmin, vmax=vmax)
             if colorbar:
