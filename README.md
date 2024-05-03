@@ -83,15 +83,7 @@ library.plot_projection("BEST", 0, 'tas', 2)
 conda create --name analog-env python=3.11.4
 conda activate analog-env
 
-conda install cartopy=0.22.0
-conda install esmf=8.4.2
-conda install hdf5=1.14.1
-conda install json5=0.9.14
-conda install matplotlib=3.7.2
-conda install regionmask=0.10.0
-conda install xarray=2023.7.0
-conda install xesmf=0.7.1
-conda install pip=23.2.1
+conda install cartopy=0.22.0 esmf=8.4.2 hdf5=1.14.1 json5=0.9.14 matplotlib=3.7.2 regionmask=0.10.0 xarray=2023.7.0 xesmf=0.7.1 pip=23.2.1
 
 pip install numpy==1.24.3
 pip install tensorflow==2.13.0
