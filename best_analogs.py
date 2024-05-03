@@ -91,7 +91,11 @@ class BestAnalogs():
     """
     Class for . . . . 
     """
-    def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None):
+    def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None, fig_path=None):
+        if fig_path is None:
+            fig_path = 'figures/'
+        self.fig_path = fig_path
+
         # save the experiment_name, load the corresponding mask
         self.experiment_name = experiment_name
         ###################################################################################
@@ -111,38 +115,38 @@ class BestAnalogs():
             self.used_members = np.concatenate([self.used_members, split_data['inputs'].member.to_numpy()])
             self.used_models = np.concatenate([self.used_models, split_data['inputs'].model.to_numpy()])
         
-        # initialize the projection_dict object (lat and lon from the training data)
-        self.projection_dict = {}
-        self.projection_dict['lat'] = split_data['lat']
-        self.projection_dict['lon'] = split_data['lon']
+        # initialize the prediction_dict object (lat and lon from the training data)
+        self.prediction_dict = {}
+        self.prediction_dict['lat'] = split_data['lat']
+        self.prediction_dict['lon'] = split_data['lon']
             
         try:
-            # check if processed projection dataset file already exists by trying to load
+            # check if processed prediction dataset file already exists by trying to load
             with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "rb") as filename:
-                self.projection_dict = pickle.load(filename)
+                self.prediction_dict = pickle.load(filename)
         except:
             # if file does not exist, check that models and members have been passed
             assert (model_list is not None and n_members is not None), "no analog library, pass models and members to generate" 
             # start a new file by processing the models/members requested
             self.process_new_data(experiment_name, model_list, n_members, data_period)
-            # and save the new projection dataset
+            # and save the new prediction dataset
             with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
-                pickle.dump(self.projection_dict, filename)                
+                pickle.dump(self.prediction_dict, filename)                
         else:
-            # if try succeeded, we have a projection dataset, but may want to add more data to it
-            # add the used_members and use_models arrays with the projection_dict (avoid saving the same data again)
-            self.used_members = np.concatenate([self.used_members, self.projection_dict['inputs'].member.to_numpy()])
-            self.used_models = np.concatenate([self.used_models, self.projection_dict['inputs'].model.to_numpy()])
+            # if try succeeded, we have a prediction dataset, but may want to add more data to it
+            # add the used_members and use_models arrays with the prediction_dict (avoid saving the same data again)
+            self.used_members = np.concatenate([self.used_members, self.prediction_dict['inputs'].member.to_numpy()])
+            self.used_models = np.concatenate([self.used_models, self.prediction_dict['inputs'].model.to_numpy()])
             # call process_new_data with model_list and n_members which will add new data to the dataset
             if model_list is not None and n_members is not None:
                 self.process_new_data(experiment_name, model_list, n_members, data_period)
-                # and save the expanded projection dataset
+                # and save the expanded prediction dataset
                 with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
-                    pickle.dump(self.projection_dict, filename)
+                    pickle.dump(self.prediction_dict, filename)
 
         # check if analogs have been selected for any sois
         try:
-            print('previously saved analogs for:', *self.projection_dict['indices'].soi_model.data)
+            print('previously saved analogs for:', *self.prediction_dict['indices'].soi_model.data)
         except:
             print('no previouly saved analogs to load!')
 
@@ -157,7 +161,7 @@ class BestAnalogs():
         # if no data_period given, default to previously used
         if data_period is None:
             data_period = experiment_settings['data_period']
-        # remove some of the processing steps that are not necessary for the projection part
+        # remove some of the processing steps that are not necessary for the prediction part
         # (sync_time not needed, shift_inout_time unnecessarily removes dates, regional_mean can be done later)
         remove_steps = ["sync_time(experiment_settings['time_range'])",
                         "shift_inout_time(-experiment_settings['leadtime'], experiment_settings['window'])",
@@ -196,7 +200,7 @@ class BestAnalogs():
             input_raw = _dp.DataProcessing([model], variables, data_period, ensembles=model_new_members)
             for var in variables:
                 # make the resolution the same as the previously processed datasets
-                input_raw.attr_dictionary[var]['res'] = [np.diff(self.projection_dict['lat']).mean(), np.diff(self.projection_dict['lon']).mean()]
+                input_raw.attr_dictionary[var]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
             output_raw = copy.deepcopy(input_raw)
 
             # run some processing steps for the inputs
@@ -243,12 +247,12 @@ class BestAnalogs():
                 outputs_raw = xr.concat([outputs_raw, output_raw], dim="member")
 
         try:
-            # concatenate this model/variable onto the existing self.projection_dict["inputs"] and self.projection_dict["target"]
-            self.projection_dict["inputs"] = xr.concat([self.projection_dict["inputs"], inputs_raw], dim="member")
-            self.projection_dict["target"] = xr.concat([self.projection_dict["target"], outputs_raw], dim="member")
+            # concatenate this model/variable onto the existing self.prediction_dict["inputs"] and self.prediction_dict["target"]
+            self.prediction_dict["inputs"] = xr.concat([self.prediction_dict["inputs"], inputs_raw], dim="member")
+            self.prediction_dict["target"] = xr.concat([self.prediction_dict["target"], outputs_raw], dim="member")
         except:
-            self.projection_dict["inputs"] = inputs_raw
-            self.projection_dict["target"] = outputs_raw
+            self.prediction_dict["inputs"] = inputs_raw
+            self.prediction_dict["target"] = outputs_raw
         
 # -------------------------------------------------------------------------------
     
@@ -301,18 +305,18 @@ class BestAnalogs():
         multiprocessing for loop to get all soi analogs for an observational dataset or single model/member,
         i.e. the full time series of sois for a given model/member or observational dataset
         """
-        # check if the requested SOI is in the projection_dict yet -- for now, it has to be, otherwise
+        # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
         # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
         try:
-            soi_index = np.where((self.projection_dict['inputs'].model == soi_model) *
-                                 (self.projection_dict['inputs'].member == soi_member))[0][0]
-            soi_inputs = self.projection_dict['inputs'].isel(member=soi_index) * self.mask
+            soi_index = np.where((self.prediction_dict['inputs'].model == soi_model) *
+                                 (self.prediction_dict['inputs'].member == soi_member))[0][0]
+            soi_inputs = self.prediction_dict['inputs'].isel(member=soi_index) * self.mask
         except:
-            print('that SOI is not in the already processed projection_dict')
+            print('that SOI is not in the already processed prediction_dict')
             
         # now remove this particular soi member from the analog library
-        analog_inds = np.setdiff1d(np.arange(self.projection_dict['inputs'].member.size), soi_index)
-        weighted_analogs = self.projection_dict['inputs'].isel(member=analog_inds) * self.mask
+        analog_inds = np.setdiff1d(np.arange(self.prediction_dict['inputs'].member.size), soi_index)
+        weighted_analogs = self.prediction_dict['inputs'].isel(member=analog_inds) * self.mask
 
         # set up multiprocessing to get the best analogs for this soi (all times)
         if n_proc is None:
@@ -333,32 +337,32 @@ class BestAnalogs():
             else:
                 soi_ds = xr.concat([soi_ds, result[ii]], dim='time')
 
-        # combine the best analogs with the projection_dict -- note that this has all the
+        # combine the best analogs with the prediction_dict -- note that this has all the
         # targets, including the SOI, so this will have one entry more than the indices
-        self.projection_dict['indices'] = soi_ds
+        self.prediction_dict['indices'] = soi_ds
         
         try:
             # if file already exists, concatenate onto existing by the soi_index dimension
             failure_reason = "failed to load existing analogs\n" + "file path: " + os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle')
             with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "rb") as filename:
-                projection_dict = pickle.load(filename)
-                self.projection_dict['indices'] = projection_dict['indices']
+                prediction_dict = pickle.load(filename)
+                self.prediction_dict['indices'] = prediction_dict['indices']
             # limit the number of analogs returned to the number from the first calculation
             # otherwise, it will try to concatenate different sized analog indices (since
             # more data could have been added) -- should avoid doing this either way, i.e.
             # should have the full analog set determined before running get_all_soi_analogs
-            max_analogs = self.projection_dict['indices'].dims['analog_size']
-            failure_reason = "failed to concatenate new data with existing\n\n"+"new data:\n"+str(soi_ds)+"\n\nexisting data:\n"+str(self.projection_dict['indices'])
-            self.projection_dict['indices'] = xr.concat([self.projection_dict['indices'], soi_ds.isel(analog_size=np.arange(max_analogs))], dim='soi_index')
-            # self.projection_dict['targets'] = self.projection_dict['target']
+            max_analogs = self.prediction_dict['indices'].dims['analog_size']
+            failure_reason = "failed to concatenate new data with existing\n\n"+"new data:\n"+str(soi_ds)+"\n\nexisting data:\n"+str(self.prediction_dict['indices'])
+            self.prediction_dict['indices'] = xr.concat([self.prediction_dict['indices'], soi_ds.isel(analog_size=np.arange(max_analogs))], dim='soi_index')
+            # self.prediction_dict['targets'] = self.prediction_dict['target']
         except:
             print(failure_reason)
         # and save it
         with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
             print('saving to:', os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'))
-            pickle.dump(self.projection_dict, filename)
+            pickle.dump(self.prediction_dict, filename)
         
-        return(self.projection_dict)
+        return(self.prediction_dict)
       
 # -------------------------------------------------------------------------------
     
@@ -372,18 +376,20 @@ class BestAnalogs():
 
 # -------------------------------------------------------------------------------
 
-    def get_full_analog_range(self, soi_model, soi_member, variable, global_mean=False):
-        # get the soi index and the full range of analog projections
-        soi_index = np.where((self.projection_dict['target'].model == soi_model) * 
-                             (self.projection_dict['target'].member == soi_member))[0]
-        all_inds = np.arange(self.projection_dict['target'].member.size)
+    def get_full_analog_range(self, soi_model, soi_member, variable, global_mean=False, minmax=True):
+        # get the soi index and the full range of analog predictions
+        soi_index = np.where((self.prediction_dict['target'].model == soi_model) * 
+                             (self.prediction_dict['target'].member == soi_member))[0]
+        all_inds = np.arange(self.prediction_dict['target'].member.size)
         non_soi_inds = np.setdiff1d(all_inds, soi_index)
-        non_soi_analogs = self.projection_dict['target'].isel(member=non_soi_inds)
+        non_soi_analogs = self.prediction_dict['target'].isel(member=non_soi_inds)
         if global_mean:
-            weights = np.cos(np.deg2rad(self.projection_dict['target'].lat))
+            weights = np.cos(np.deg2rad(self.prediction_dict['target'].lat))
             non_soi_analogs = non_soi_analogs.weighted(weights).mean(("lon", "lat"), skipna=True)
-        
-        return(non_soi_analogs[variable].min(dim='member').data, non_soi_analogs[variable].max(dim='member').data)
+        if minmax:
+            return(non_soi_analogs[variable].min(dim='member').data, non_soi_analogs[variable].max(dim='member').data)
+        else:
+            return(non_soi_analogs[variable].mean(dim='member').data)
         
 # -------------------------------------------------------------------------------
     
@@ -395,23 +401,23 @@ class BestAnalogs():
         returns the targets for both the analogs, and the soi (will be different shapes if leadstep != 1)
         """
         # make sure there are analogs to get targets from
-        assert self.projection_dict['indices'], "no soi analogs calculated yet, run self.get_all_soi_analogs(soi_model, soi_member, n_proc)"
+        assert self.prediction_dict['indices'], "no soi analogs calculated yet, run self.get_all_soi_analogs(soi_model, soi_member, n_proc)"
         # get the soi_index corresponding to the requested soi_model and soi_member for the indices
-        soi_index = np.where((self.projection_dict['indices'].soi_model == soi_model) * 
-                             (self.projection_dict['indices'].soi_member == soi_member))[0]
+        soi_index = np.where((self.prediction_dict['indices'].soi_model == soi_model) * 
+                             (self.prediction_dict['indices'].soi_member == soi_member))[0]
         
-        ntimes = self.projection_dict['indices'].time.size
-        weights = np.cos(np.deg2rad(self.projection_dict['target'].lat))
+        ntimes = self.prediction_dict['indices'].time.size
+        weights = np.cos(np.deg2rad(self.prediction_dict['target'].lat))
         leadtime = rexp.Experiments().get_experiment(self.experiment_name)['leadtime']
 
         if max_year is None:
-            max_year = self.projection_dict['indices']['soi_time.year'][-1]
+            max_year = self.prediction_dict['indices']['soi_time.year'][-1]
 
         # for the specified soi, get the corresponding targets
-        soi_projection, projection_min, projection_max = [], [], []
+        soi_prediction, prediction_min, prediction_max = [], [], []
         # for each time step
         for soi_time_index in range(0, ntimes, leadstep):
-            current_time_ds = self.projection_dict['indices'].isel(time=soi_time_index, soi_index=soi_index)
+            current_time_ds = self.prediction_dict['indices'].isel(time=soi_time_index, soi_index=soi_index)
 
             ii = 0
             step_analogs = []
@@ -422,13 +428,13 @@ class BestAnalogs():
                 # if next_best.best_analog_times <= ntimes - leadstep - leadtime:
                 if next_best.best_analog_times <= ntimes - leadstep - leadtime and next_best['best_input_times.year'] <= max_year:
                     # get indices for member and time for the target dataset
-                    member_ind = np.where(np.logical_and(self.projection_dict['target'].model == next_best.best_analog_models,
-                                                         self.projection_dict['target'].member == next_best.best_analog_members))[0].item()
+                    member_ind = np.where(np.logical_and(self.prediction_dict['target'].model == next_best.best_analog_models,
+                                                         self.prediction_dict['target'].member == next_best.best_analog_members))[0].item()
                     time_inds = np.arange(next_best.best_analog_times+leadtime, next_best.best_analog_times+leadtime+leadstep)
                     # and check if the target is all nans
-                    proposed_target = self.projection_dict['target'].isel(time=time_inds, member=member_ind)[variable]
+                    proposed_target = self.prediction_dict['target'].isel(time=time_inds, member=member_ind)[variable]
                     if ~np.all(np.isnan(proposed_target)):
-                        # now convert to global mean if requested (projections)
+                        # now convert to global mean if requested (predictions)
                         if global_mean:
                             proposed_target = proposed_target.weighted(weights).mean(("lon", "lat"), skipna=True)
                         step_analogs.append(proposed_target.data)
@@ -436,60 +442,127 @@ class BestAnalogs():
         
             if return_average:
                 # get the average of the analogs, if requested
-                soi_projection.append(np.nanmean(step_analogs, axis=0))
+                soi_prediction.append(np.nanmean(step_analogs, axis=0))
             else:
                 # otherwise return all of them separately
-                soi_projection.append(step_analogs)
-            projection_min.append(np.nanmin(step_analogs, axis=0))
-            projection_max.append(np.nanmax(step_analogs, axis=0))
+                soi_prediction.append(step_analogs)
+            prediction_min.append(np.nanmin(step_analogs, axis=0))
+            prediction_max.append(np.nanmax(step_analogs, axis=0))
             # print(soi_time_index, ii)
 
         # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
-        soi_ind = np.where((self.projection_dict['target'].model == soi_model) &
-                           (self.projection_dict['target'].member == soi_member))[0]
+        soi_ind = np.where((self.prediction_dict['target'].model == soi_model) &
+                           (self.prediction_dict['target'].member == soi_member))[0]
         # get the soi (aka the truth)
-        # truth = self.projection_dict['target'].isel(member=soi_ind, time=np.arange(ntimes))[variable]
-        truth = self.projection_dict['target'].isel(member=soi_ind)[variable]
+        # truth = self.prediction_dict['target'].isel(member=soi_ind, time=np.arange(ntimes))[variable]
+        truth = self.prediction_dict['target'].isel(member=soi_ind)[variable]
         if global_mean:
             truth = truth.weighted(weights).mean(("lon", "lat"), skipna=True)
 
-        # return(truth.data.squeeze(), np.squeeze(soi_projection)[:ntimes], np.squeeze(projection_min)[:ntimes], np.squeeze(projection_max)[:ntimes])
-        return(truth.data.squeeze(), np.squeeze(soi_projection), np.squeeze(projection_min), np.squeeze(projection_max))
-    
+        # return(truth.data.squeeze(), np.squeeze(soi_prediction)[:ntimes], np.squeeze(prediction_min)[:ntimes], np.squeeze(prediction_max)[:ntimes])
+        return(truth.data.squeeze(), np.squeeze(soi_prediction), np.squeeze(prediction_min), np.squeeze(prediction_max))
+
 # -------------------------------------------------------------------------------
         
-    def plot_projection(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
+    def plot_prediction_suite(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
         # get the settings so the region name can be used in the figure
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         leadtime = settings['leadtime']
         if savename is None:
-            savename = self.experiment_name+'_projection.pdf'
+            savename = self.experiment_name+'_suite.pdf'
         # get the targets for the requested soi and variable
-        truth, projection, projection_min, projection_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
+        truth, prediction, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
         ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
 
-        # get the full range of analog projections
+        # get the full range of analog predictions and the model mean
+        all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
+        all_model_mean = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True, minmax=False)
+
+        # now make the figure
+        fig, ax = plt.subplots(4, 1, figsize=(14,5*4))
+        # --------------- plot the analog prediction and truth --------------- #
+        # plot the true values (i.e. the soi target)
+        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
+        # plot the prediction
+        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], '-', label='analog prediction ('+str(n_analogs)+')',
+                 lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
+        # --------------- plot the ranges and truth (refining spread) --------------- #
+        # plot the range of library
+        ax[1].fill_between(self.prediction_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
+                         alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
+        # plot the range of all the analogs
+        ax[1].fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_sunshine,
+                         alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
+        # plot the true values (i.e. the soi target)
+        ax[1].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
+        # --------------- plot the model mean and truth --------------- #
+        # plot the true values (i.e. the soi target)
+        ax[2].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
+        # plot the model mean of library
+        ax[2].plot(self.prediction_dict['target']['time.year'][:ntimes], all_model_mean[:ntimes], label='model mean',
+                color=c_skyline_l, lw=3, path_effects=[patheffects.withStroke(linewidth=4.66, foreground="k")])
+
+        # set up the legend and axes for each subplot
+        for ii in range(4):
+            # legend, labels, etc.
+            handles, labels = ax[ii].get_legend_handles_labels()
+            handles = [copy.copy(ha) for ha in handles]
+            if ii == 1:
+                [ha.set_alpha(0.7) for ha in handles[:2]]
+            leg = ax[ii].legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'size':'15'})#, prop={'weight':'bold', 'size':'15'})
+            ax[ii].spines['right'].set_visible(False)
+            ax[ii].spines['top'].set_visible(False)
+            ax[ii].yaxis.set_ticks_position('left')
+            ax[ii].xaxis.set_ticks_position('bottom')    
+            ax[ii].patch.set_facecolor('none')
+            ax[ii].tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10, labelsize=16)
+        # x and y labels, title
+        ax[3].set_xlabel('prediction year', fontsize=18)
+        ax[0].set_title(settings['region']+', '+variable+': '+str(settings['leadtime'])+' year lead, '+str(settings['window'])+' year window', fontsize=18, fontweight='bold')
+        # # add y label just once in the middle
+        # fig.add_subplot(111, frameon=False)
+        # plt.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
+        # plt.grid(False)
+        # plt.ylabel(variable, fontsize=22, labelpad=15)
+
+        plt.subplots_adjust(hspace=0.17)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.show()
+
+# -------------------------------------------------------------------------------
+        
+    def plot_range(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
+        # get the settings so the region name can be used in the figure
+        settings = rexp.Experiments().get_experiment(self.experiment_name)
+        leadtime = settings['leadtime']
+        if savename is None:
+            savename = self.experiment_name+'_range.pdf'
+        # get the targets for the requested soi and variable
+        truth, _, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
+        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+
+        # get the full range of analog predictions
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
-        # plot the range of all analogs
-        ax.fill_between(self.projection_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
-                         alpha=0.33, label='all analogs', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
-        # # plot the range of all the best analogs
-        # ax.fill_between(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection_min[:ntimes], projection_max[:ntimes], color=c_flatirons,
-        #                  alpha=0.3, label='best analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flatirons)])
-        # plot the projection
-        ax.plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection[:ntimes], label='analog prediction ('+str(n_analogs)+')',
-                 lw=3, c=c_skyline_l, path_effects=[patheffects.withStroke(linewidth=4.66, foreground="k")])
+        # plot the range of library
+        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
+                         alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
+        # plot the range of all the analogs
+        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_sunshine,
+                         alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
-        ax.plot(self.projection_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
 
         # legend, labels, etc.
         handles, labels = ax.get_legend_handles_labels()
         handles = [copy.copy(ha) for ha in handles]
-        [ha.set_alpha(0.7) for ha in handles[:1]]
+        [ha.set_alpha(0.7) for ha in handles[:2]]
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
 
         ax.set_xlabel('prediction year', fontsize=18)
@@ -503,39 +576,122 @@ class BestAnalogs():
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
 
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.show()
+
+# -------------------------------------------------------------------------------
+        
+    def plot_prediction(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
+        # get the settings so the region name can be used in the figure
+        settings = rexp.Experiments().get_experiment(self.experiment_name)
+        leadtime = settings['leadtime']
+        if savename is None:
+            savename = self.experiment_name+'_prediction.pdf'
+        # get the targets for the requested soi and variable
+        truth, prediction, _, _ = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
+        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+
+        # now make the plot
+        fig, ax = plt.subplots(1, 1, figsize=(14,5))
+        # plot the true values (i.e. the soi target)
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
+        # plot the prediction
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], '-', label='analog prediction ('+str(n_analogs)+')',
+                 lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
+
+        # legend, labels, etc.
+        handles, labels = ax.get_legend_handles_labels()
+        handles = [copy.copy(ha) for ha in handles]
+        # [ha.set_alpha(0.7) for ha in handles[:1]]
+        leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
+
+        ax.set_xlabel('prediction year', fontsize=18)
+        ax.set_ylabel(settings['region']+'\n'+variable, fontsize=18)
+        ax.set_title(str(settings['leadtime'])+' year lead, '+str(settings['window'])+' year window', fontsize=18)
+
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.yaxis.set_ticks_position('left')
+        ax.xaxis.set_ticks_position('bottom')    
+        ax.patch.set_facecolor('none')
+        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
+
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.show()
+
+# -------------------------------------------------------------------------------
+        
+    def plot_model_mean(self, soi_model, soi_member, variable, savename=None):
+        # get the settings so the region name can be used in the figure
+        settings = rexp.Experiments().get_experiment(self.experiment_name)
+        leadtime = settings['leadtime']
+        if savename is None:
+            savename = self.experiment_name+'_model_mean.pdf'
+        # get the targets for the requested soi and variable
+        truth, _, _, _ = self.get_targets(soi_model, soi_member, variable, 1, 1, global_mean=True)
+        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+        all_model_mean = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True, minmax=False)
+
+        # now make the plot
+        fig, ax = plt.subplots(1, 1, figsize=(14,5))
+        # plot the true values (i.e. the soi target)
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
+        # plot the model mean of library
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], all_model_mean[:ntimes], label='model mean',
+                color=c_skyline_l, lw=3, path_effects=[patheffects.withStroke(linewidth=4.66, foreground="k")])
+
+        # legend, labels, etc.
+        handles, labels = ax.get_legend_handles_labels()
+        handles = [copy.copy(ha) for ha in handles]
+        # [ha.set_alpha(0.7) for ha in handles[:1]]
+        leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
+
+        ax.set_xlabel('prediction year', fontsize=18)
+        ax.set_ylabel(settings['region']+'\n'+variable, fontsize=18)
+        ax.set_title(str(settings['leadtime'])+' year lead, '+str(settings['window'])+' year window', fontsize=18)
+
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.yaxis.set_ticks_position('left')
+        ax.xaxis.set_ticks_position('bottom')    
+        ax.patch.set_facecolor('none')
+        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
+
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
         
 # -------------------------------------------------------------------------------
 
-    def plot_projection_difference(self, soi_model, soi_member, variable, n_analogs, leadstep=1, max_year=2100, savename=None):
+    def plot_prediction_difference(self, soi_model, soi_member, variable, n_analogs, leadstep=1, max_year=2100, savename=None):
         # get the settings so the region name can be used in the figure
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         leadtime = settings['leadtime']
         if savename is None:
             savename = self.experiment_name+'_difference.pdf'
         # get the targets for the requested soi and variable
-        truth, projection, projection_min, projection_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, max_year=max_year, global_mean=True)
+        truth, prediction, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, max_year=max_year, global_mean=True)
         ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
 
-        # get the full range of analog projections
+        # get the full range of analog predictions
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
 
         # now make the plot
         fig, ax = plt.subplots(2, 1, figsize=(17, 8.5), height_ratios=[2, 1], sharex=True)
 
-        # top panel -- truth, projection, analog ranges
+        # top panel -- truth, prediction, analog ranges
         # plot the range of all analogs
-        ax[0].fill_between(self.projection_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline,
+        ax[0].fill_between(self.prediction_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline,
                          alpha=0.4, label='all analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline)])
         # plot the range of all the best analogs
-        ax[0].fill_between(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection_min[:ntimes], projection_max[:ntimes], color=c_flatirons,
+        ax[0].fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_flatirons,
                          alpha=0.3, label='best analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flatirons)])
         # plot the true values (i.e. the soi target)
-        ax[0].plot(self.projection_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=3.33, c=c_midnight, label='truth',
+        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=3.33, c=c_midnight, label='truth',
                  path_effects=[patheffects.withStroke(linewidth=5, foreground='white')])
-        # plot the projection
-        ax[0].plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection[:ntimes], label='best analogs ('+str(n_analogs)+')',
+        # plot the prediction
+        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], label='best analogs ('+str(n_analogs)+')',
                  lw=3.33, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
         # top panel settings
         ax[0].set_title(self.experiment_name, fontsize=18)
@@ -551,8 +707,8 @@ class BestAnalogs():
         [ha.set_alpha(0.7) for ha in handles[:2]]
         leg = ax[0].legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
 
-        # bottom panel -- difference between truth and projection
-        ax[1].plot(self.projection_dict['target']['time.year'][:ntimes][:-leadtime]+leadtime, truth[:ntimes][leadtime:]-projection[:ntimes][:-leadtime], lw=0.5, c='white',
+        # bottom panel -- difference between truth and prediction
+        ax[1].plot(self.prediction_dict['target']['time.year'][:ntimes][:-leadtime]+leadtime, truth[:ntimes][leadtime:]-prediction[:ntimes][:-leadtime], lw=0.5, c='white',
                    label='truth $-$ best analogs', path_effects=[patheffects.withStroke(linewidth=5, foreground=c_midnight)])
         # legend, labels, etc.
         handles, labels = ax[1].get_legend_handles_labels()
@@ -576,7 +732,7 @@ class BestAnalogs():
         plt.xlabel('prediction year', size=20, labelpad=-30)
 
         plt.subplots_adjust(hspace=0.2)
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
 # -------------------------------------------------------------------------------
@@ -584,17 +740,17 @@ class BestAnalogs():
     #### needs updating (time of prediction)
 
     def plot_range_change(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
-        ### compute the reduction in the range of projections compared to using all analogs
+        ### compute the reduction in the range of predictions compared to using all analogs
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         if savename is None:
-            savename = self.experiment_name+'_range.pdf'
+            savename = self.experiment_name+'_range_change.pdf'
             
         # get the range for the best analogs and for all analogs
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable)
         _, _, pmin, pmax = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep)
         range_diff = (all_max - pmax) + (pmin - all_min)
         # interpolate so it can be divided at zero by color -- probably a better way, but this works for now
-        x = self.projection_dict['targets']['time.year']
+        x = self.prediction_dict['targets']['time.year']
         newx = np.linspace(x.min(), x.max(), x.size**2)
         newy = np.interp(newx, x, range_diff)
         # make the figure
@@ -618,7 +774,7 @@ class BestAnalogs():
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
 
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
 # -------------------------------------------------------------------------------
@@ -629,14 +785,14 @@ class BestAnalogs():
             savename = self.experiment_name+'_model_dist.pdf'
         
         # get the index of the soi corresponding to the given model and member
-        soi_index = np.where((self.projection_dict['indices'].soi_model == soi_model) * 
-                            (self.projection_dict['indices'].soi_member == soi_member))[0][0]
+        soi_index = np.where((self.prediction_dict['indices'].soi_model == soi_model) * 
+                            (self.prediction_dict['indices'].soi_member == soi_member))[0][0]
         
         # get the targets for the requested soi and variable to restrict the times
         truth, _, _, _ = self.get_targets(soi_model, soi_member, variable, n_analogs=1, global_mean=True)
         ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
         # get the models that were selected for the analogs of this soi
-        selected_model = self.projection_dict['indices'].isel(soi_index=soi_index).best_analog_models[:ntimes, :n_analogs]
+        selected_model = self.prediction_dict['indices'].isel(soi_index=soi_index).best_analog_models[:ntimes, :n_analogs]
         # get the names of the models that were selected for this soi across all times
         models = np.unique(selected_model)
 
@@ -651,7 +807,7 @@ class BestAnalogs():
         model_member_size = np.zeros(models.size, dtype=int)
         for ii, model in enumerate(models):
             selected_model_int[np.where(selected_model == model)] = int(ii)
-            model_member_size[ii] = self.projection_dict['inputs'].member[np.where(self.projection_dict['inputs'].model == model)[0]].size
+            model_member_size[ii] = self.prediction_dict['inputs'].member[np.where(self.prediction_dict['inputs'].model == model)[0]].size
 
         # make the plot
         fig, ax = plt.subplots(1, 1, figsize=(np.min([models.size, 10]), 5))
@@ -682,7 +838,7 @@ class BestAnalogs():
         ax.tick_params(which='both', axis='x', bottom=False)
         ax.set_xlim([bins[0], bins[np.min([models.size, 10])]])
         
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
 # -------------------------------------------------------------------------------
@@ -695,15 +851,15 @@ class BestAnalogs():
             savename = self.experiment_name+'_model_times.pdf'
         
         # get the index of the soi corresponding to the given model and member
-        soi_index = np.where((self.projection_dict['indices'].soi_model == soi_model) * 
-                             (self.projection_dict['indices'].soi_member == soi_member))[0][0]
+        soi_index = np.where((self.prediction_dict['indices'].soi_model == soi_model) * 
+                             (self.prediction_dict['indices'].soi_member == soi_member))[0][0]
         
         # get the targets for the requested soi and variable to restrict the times
         truth, _, _, _ = self.get_targets(soi_model, soi_member, variable, n_analogs=1, global_mean=True)
         ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
-        times = self.projection_dict['target']['time.year'][:ntimes] + leadtime
+        times = self.prediction_dict['target']['time.year'][:ntimes] + leadtime
         # get the models that were selected for the analogs of this soi
-        selected_model = self.projection_dict['indices'].isel(soi_index=soi_index).best_analog_models[:ntimes, :n_analogs]
+        selected_model = self.prediction_dict['indices'].isel(soi_index=soi_index).best_analog_models[:ntimes, :n_analogs]
         # get the names of the models that were selected for this soi across all times
         models = np.unique(selected_model)
 
@@ -736,7 +892,7 @@ class BestAnalogs():
         ax.xaxis.set_ticks_position('bottom')    
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=0)
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
         
 # -------------------------------------------------------------------------------
@@ -750,17 +906,17 @@ class BestAnalogs():
         spread = int((roll_years - 1)/2)
 
         # get the index of the soi corresponding to the given model and member
-        soi_index = np.where((self.projection_dict['indices'].soi_model == soi_model) * 
-                            (self.projection_dict['indices'].soi_member == soi_member))[0][0]
+        soi_index = np.where((self.prediction_dict['indices'].soi_model == soi_model) * 
+                            (self.prediction_dict['indices'].soi_member == soi_member))[0][0]
 
         # get the soi year and the spread of the selected analog years
         ######### fix this #########
-        # np.sum(~np.isnan(self.projection_dict['target'].isel(member=soi_index).mean(['lat', 'lon'], skipna=True)))
-        # soi_times = self.projection_dict['target']['time.year'][:172] + leadtime
-        soi_times = self.projection_dict['target']['time.year'] + leadtime
+        # np.sum(~np.isnan(self.prediction_dict['target'].isel(member=soi_index).mean(['lat', 'lon'], skipna=True)))
+        # soi_times = self.prediction_dict['target']['time.year'][:172] + leadtime
+        soi_times = self.prediction_dict['target']['time.year'] + leadtime
         cut = 171-17
         # ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
-        analog_times = self.projection_dict['indices']['best_input_times.year'][soi_index, :, :n_analogs] + leadtime
+        analog_times = self.prediction_dict['indices']['best_input_times.year'][soi_index, :, :n_analogs] + leadtime
 
         # getting the rolling mean, min, max
         best_analog = np.zeros(soi_times.size - roll_years + 1)
@@ -794,39 +950,39 @@ class BestAnalogs():
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
 
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
 # -------------------------------------------------------------------------------
 
-    def plot_constrained_projection(self, soi_model, soi_member, variable, n_analogs, max_year, savename=None):
+    def plot_constrained_prediction(self, soi_model, soi_member, variable, n_analogs, max_year, savename=None):
         ####### change this to only pass pre max_year analogs (will be much faster) ########
         # get the settings so the region name can be used in the figure
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         leadtime = settings['leadtime']
         if savename is None:
-            savename = self.experiment_name+'_constrained_projection.pdf'
+            savename = self.experiment_name+'_constrained_prediction.pdf'
         # get the targets for the requested soi and variable
-        truth, projection, projection_min, projection_max = self.get_targets(soi_model, soi_member, variable, n_analogs, return_average=True, global_mean=True)
-        _, c_projection, c_projection_min, c_projection_max = self.get_targets(soi_model, soi_member, variable, n_analogs, return_average=True, global_mean=True, max_year=max_year)
+        truth, prediction, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, return_average=True, global_mean=True)
+        _, c_prediction, c_prediction_min, c_prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, return_average=True, global_mean=True, max_year=max_year)
         ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of all the best analogs (unconstrained)
-        ax.fill_between(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection_min[:ntimes], projection_max[:ntimes], color=c_flowertrial,
+        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_flowertrial,
                          alpha=0.3, path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flowertrial, alpha=0.3)])
         # plot the range of all the best analogs (constrained)
-        ax.fill_between(self.projection_dict['target']['time.year'][:ntimes]+leadtime, c_projection_min[:ntimes], c_projection_max[:ntimes], color=c_horsetooth,
+        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, c_prediction_min[:ntimes], c_prediction_max[:ntimes], color=c_horsetooth,
                          alpha=0.3, path_effects=[patheffects.withStroke(linewidth=1, foreground=c_horsetooth, alpha=0.3)])
         # plot the true values (i.e. the soi target)
-        ax.plot(self.projection_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=3.33, c=c_midnight, label='truth',
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=3.33, c=c_midnight, label='truth',
                  path_effects=[patheffects.withStroke(linewidth=5, foreground='white')])
-        # plot the projection (unconstrained)
-        ax.plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, projection[:ntimes], label='analogs ('+str(n_analogs)+')',
+        # plot the prediction (unconstrained)
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], label='analogs ('+str(n_analogs)+')',
                  lw=3.33, c=c_flowertrial, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
-        # plot the projection (unconstrained)
-        ax.plot(self.projection_dict['target']['time.year'][:ntimes]+leadtime, c_projection[:ntimes], label='constrained analogs ('+str(n_analogs)+')',
+        # plot the prediction (unconstrained)
+        ax.plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, c_prediction[:ntimes], label='constrained analogs ('+str(n_analogs)+')',
                  lw=3.33, c=c_horsetooth, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
 
         # legend, labels, etc.
@@ -845,7 +1001,7 @@ class BestAnalogs():
         ax.patch.set_facecolor('none')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
 
-        plt.savefig('figures/'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
 # -------------------------------------------------------------------------------
@@ -874,8 +1030,24 @@ class BestAnalogs():
                                   transform=data_crs, cmap=cmap, vmin=vmin, vmax=vmax)
             if colorbar:
                 cb = plt.colorbar(image, shrink=0.75, orientation="horizontal", pad=0.02)
-            plt.savefig('figures/'+var+'_'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+            plt.savefig(self.fig_path+var+'_'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
             plt.show()
+
+# -------------------------------------------------------------------------------
+        
+    def prediction_mse(self, soi_model, soi_member, variable, n_analogs, leadstep=1):
+        # get the settings so the region name can be used in the figure
+        settings = rexp.Experiments().get_experiment(self.experiment_name)
+        leadtime = settings['leadtime']
+        # get the targets for the requested soi and variable
+        truth, prediction, _, _ = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
+        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+        # get model mean
+        all_model_mean = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True, minmax=False)
+
+        model_mean_mse = np.mean((all_model_mean[:ntimes] - truth[:ntimes])**2)
+        analog_mse = np.mean((prediction[:ntimes-leadtime] - truth[leadtime:ntimes])**2)
+        return(analog_mse, model_mean_mse)
 
 # -------------------------------------------------------------------------------
 

@@ -707,7 +707,8 @@ class DataProcessing():
                                              self.data_dictionary[var][model]['time.year'] <= baseline[1]))[0]
                 # baseline mean over time and members
                 ############ switch to baseline each member separately, add monthly check and baseline by months if so ##############
-                baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'], skipna=True)
+                # baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'], skipna=True)
+                baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time'], skipna=True)
                 # remove the baseline from the dataset
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] - baseline_mean
         
