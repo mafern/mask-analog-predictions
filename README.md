@@ -81,16 +81,12 @@ library.plot_projection("BEST", 0, 'tas', 2)
 > most of the following packages require the conda-forge channel, versions given below are sufficient, but not necessarily required
 ```bash
 conda create --name analog-env python=3.11.4
+conda config --add channels conda-forge
 conda activate analog-env
 
 conda install cartopy=0.22.0 esmf=8.4.2 hdf5=1.14.1 json5=0.9.14 matplotlib=3.7.2 regionmask=0.10.0 xarray=2023.7.0 xesmf=0.7.1 pip=23.2.1
 
-pip install numpy==1.24.3
-pip install tensorflow==2.13.0
-pip install tensorflow-macos==2.13.0
-pip install silence-tensorflow==1.2.1
-pip install keras==2.13.1
-pip install ipykernel
+pip install numpy==1.24.3 tensorflow==2.13.0 tensorflow-macos==2.13.0 silence-tensorflow==1.2.1 keras==2.13.1 ipykernel cftime
 ```
 
 <h2 align="center">references</h2>
