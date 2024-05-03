@@ -90,6 +90,7 @@ pip install tensorflow==2.13.0
 pip install tensorflow-macos==2.13.0
 pip install silence-tensorflow==1.2.1
 pip install keras==2.13.1
+pip install ipykernel
 ```
 
 <h2 align="center">references</h2>
