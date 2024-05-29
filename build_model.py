@@ -7,8 +7,8 @@ __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
 
 
-# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-
+# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+# TODO: try jacob's suggestion of removing final layer of network
 
 
 # def parse_model(x_input, mask_model, dissimilarity_model, prediction_model):

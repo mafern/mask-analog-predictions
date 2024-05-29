@@ -15,16 +15,13 @@ import regionmask
 import json
 
 
-# change window (make an option) (see Yeager 2018)
-
-# get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
-
-# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+# TODO: change window (make an option) (see Yeager 2018)
+# TODO: get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
+# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
 
 
-
-####################################################################################
 def route_by_filetype(file_type, file):
+    # TODO: add support for other file types
     # call appropriate loading function: xarray for .nc, .hdf, .grib
     # only support for netcdf files for now
     if file_type == ".nc":
@@ -36,7 +33,6 @@ def route_by_filetype(file_type, file):
 
 def load_nc(file):
     return xr.load_dataset(file)
-####################################################################################
 
 
 class DataProcessing():
@@ -280,12 +276,11 @@ class DataProcessing():
                     # shift time coordinates
                     new_times = xr.CFTimeIndex(self.data_dictionary[var][model].time.values).shift(n=roll_period+1, freq=self.period)
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=new_times)
-                #############################################################################################################
-                # MIGHT BE A BAD WAY TO IMPLEMENT, BUT REMOVE THE ROLL_PERIOD-1 ENTRIES FROM START OR END DEPENDING ON SIGN
+                # TODO: is there a better way to do this? currently removes the roll_period - 1 entries from the start
+                # or end depending on sign (works for now)
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(abs(roll_period)-1))
                 else:
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(roll_period-1))+1))
-                #############################################################################################################
 
         print('rolling average applied, now', self.data_dictionary[var][model].time.size, 'time steps')
 
@@ -398,11 +393,9 @@ class DataProcessing():
             print('regridding datasets to resolution', resolutions)
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                ####################################################################################
-                # SHOULD CHANGE THIS TO GET RANGE FROM DATA
-                ####################################################################################
                 # construct the regridder using xESMF: https://xesmf.readthedocs.io/en/latest/index.html
                 latlon_dict = {
+                    # TODO: update this to get the range directly from the data
                     "lat": np.arange(-90+0.5*resolutions[0], 90, resolutions[0]),
                     "lon": np.arange(0, 360, resolutions[1])
                 }
@@ -680,8 +673,9 @@ class DataProcessing():
     
     # -------------------------------------------------------------------------------
     
-    ####################################################################################
-    # ONLY SUPPORTS YEARLY DATA FOR NOW -- add print statement
+    # TODO: only supports yearly data for baselining, update to allow for other timescales
+    # TODO: add print statement to show what it has done
+    # TODO: explore dividing by the STD over the baseline period to normalize further
     def baseline_norm(self, baseline, var_list=None):
         """
         normalize the datasets by a baseline period averaged over time and members.
@@ -692,10 +686,10 @@ class DataProcessing():
             - data_dictionary where each model has been normalized by the mean of the baseline
             over time and members.
         """
-        # # if data is not yet yearly
-        # if self.period[-1] != 'Y':
-        #     # make dataset yearly
-        #     self.smooth_time(period='1Y')
+        # if data is not yet yearly
+        if self.period[-1] != 'Y':
+            # make dataset yearly
+            self.smooth_time(period='1Y')
         if var_list is None:
             var_list = list(self.data_dictionary.keys())
         # for each requested variable
@@ -705,14 +699,10 @@ class DataProcessing():
                 # get the time range indices
                 baseline_inds = np.where(np.logical_and(self.data_dictionary[var][model]['time.year'] >= baseline[0], 
                                              self.data_dictionary[var][model]['time.year'] <= baseline[1]))[0]
-                # baseline mean over time and members
-                ############ switch to baseline each member separately, add monthly check and baseline by months if so ##############
-                # baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time', 'member'], skipna=True)
+                # baseline mean over time for each member
                 baseline_mean = self.data_dictionary[var][model].isel(time=baseline_inds).mean(['time'], skipna=True)
                 # remove the baseline from the dataset
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] - baseline_mean
-        
-    ####################################################################################
     
     # -------------------------------------------------------------------------------
     # -------------------------------------------------------------------------------

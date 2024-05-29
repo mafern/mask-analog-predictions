@@ -97,16 +97,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=0):
-        ###################################################################################
-        # COULD ADD PROCESSING_ORDER INPUT THAT OVERRIDES DEFAULT ORDER
-        
-        # things that could be added with additional functionality
-        # "input_var": "ts",
-        # "target_var": "ts",
-        # "scenario": "historical",  # ("historical", "rcp45", "both)
-        # "rng_seed_list": list(range(0,100, 10))
-        ###################################################################################
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=[0]):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -146,7 +137,7 @@ class Experiments():
                 - mask_l1: l1 regularization for the mask, default is 0 (off)
                 - mask_l2: l2 regularization for the mask, default is 0 (off)
                 - norm_weights: whether to normalize the mask weights, default is True
-                - seed: random seed to use in the member selection (###### and possibly the network training)
+                - seed: list of random seeds to use in the member selection and the network training
                 
         Returns a dictionary containing all of the requested experiment settings, including the processing steps (in a sensable order).
         """
@@ -254,30 +245,19 @@ class Experiments():
          testing_inputs, testing_target,
          lat, lon) = self.get_experiment_data(experiment_name, overwrite_data=overwrite_data)
         
-        ###################################################################################
-        #### reshape for multiple variables, since tensorflow flatten wants it this way
+        # reshape for multiple variables, since tensorflow flatten wants it this way
         analog_inputs = np.transpose(analog_inputs, (0, 3, 1, 2))
         training_inputs = np.transpose(training_inputs, (0, 3, 1, 2))
         validation_inputs = np.transpose(validation_inputs, (0, 3, 1, 2))
         testing_inputs = np.transpose(testing_inputs, (0, 3, 1, 2))
-        ###################################################################################
         
-        ###################################################################################
-        # do i want to do multiple seeds? not for most of the results, as it doesn't matter
-        # very much -- will want to show this though, so keep this code commented out, and
-        # when showing it keep the seeds separate to show lack fo variance
-        # will also need to change the make_mask.py code to remove multiple seeds
         models = []
-        # for seed in range(0, 100, 10):
-        for seed in [20]:
-            experiment_settings["seed"] = seed
-        ###################################################################################
-        
+        for seed in list(experiment_settings["seed"]):
             # ensure model names are consistent, etc.
             tf.keras.backend.clear_session()
-            np.random.seed(experiment_settings["seed"])
-            random.seed(experiment_settings["seed"])
-            tf.random.set_seed(experiment_settings["seed"])
+            np.random.seed(seed)
+            random.seed(seed)
+            tf.random.set_seed(seed)
 
             # build the full model for learning the mask: mask, dissimilarity, prediction models
             model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs])
@@ -297,9 +277,7 @@ class Experiments():
             )
             pprint(fit_summary, width=80)
             
-            ###################################################################################
             models.append(model)
-            ###################################################################################
         return models
 
     # -------------------------------------------------------------------------------
@@ -363,7 +341,7 @@ class Experiments():
     @property
     def list_variables(self):
         ###################################################################################
-        # get list of models and associated variables ----- only looking in monthly for now
+        # TODO: only looking in monthly for now -- update to look in yearly, daily
         ###################################################################################
         resolution_dictionary = {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81]}
         models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/*'))

@@ -15,23 +15,11 @@ import os
 import gzip
 import copy
 
-# when processing for the analogs (after the network), I don't think we should be removing any of the inputs for the SOI
-
-# i.e. we should find the best analogs for all inputs -- double check that this is the case
-
-# update times so it is prediction time
-
-# need to compare the no mask results (global 1s) to our mask (and to a regional mask), and to ensemble mean -- skill would be the main way
-
-# IS THE PROCESSED DATA FOR PREDICTION ANY DIFFERENT WITH LEAD TIME NOW? (i think it might not be, so a single one can be used
-# and these could be specified by models or something other than experiment, and used for multiple experiments)
-# seems like the difference is just for the inputs -- seems masked even though i tried to avoid that -- and of course for the indices
-
-# multiple masks -- different leadtimes to get a coherent time series (starting from a single soi time rather than rolling that forward and projecting 1 year over and over)
-
-# earth mover's distance to determine quality of prediction
-
-
+# TODO: confirm that all times have been updated to prediction time
+# TODO: compare the no mask results (global 1s) to our mask and to a regional mask, and to ensemble mean
+# TODO: figure out a good way to reuse libraries (avoid reprocessing if possible) -- same for mask training
+# TODO: explore multiple masks -- different leadtimes to get a coherent time series (starting from a single soi time rather than rolling that forward and projecting 1 year over and over)
+# TODO: try earth mover's distance to determine quality of prediction
 
 
 # define some colors and cmaps -- nuggets
@@ -89,7 +77,7 @@ plt.rcParams['axes.linewidth'] = 2
 
 class BestAnalogs():
     """
-    Class for . . . . 
+    Class for processing analog library, selecting best analogs for a given SOI.
     """
     def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None, fig_path=None):
         if fig_path is None:
@@ -98,11 +86,9 @@ class BestAnalogs():
 
         # save the experiment_name, load the corresponding mask
         self.experiment_name = experiment_name
-        ###################################################################################
-        # this is the mean mask over all seeds, but if we go with a single instance this needs to change
+        # TODO: currently uses the mean mask over all seeds, may want to try something else
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         self.mask = self.mask_object.mean("seed").squeeze()
-        ###################################################################################
         
         # get the training, validation, and testing data so they can be avoided in the soi and analogs
         self.used_members = np.empty(0, dtype=int)
@@ -512,7 +498,7 @@ class BestAnalogs():
             handles = [copy.copy(ha) for ha in handles]
             if ii == 1:
                 [ha.set_alpha(0.7) for ha in handles[:2]]
-            leg = ax[ii].legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'size':'15'})#, prop={'weight':'bold', 'size':'15'})
+            leg = ax[ii].legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'size':'15', 'style':'oblique'})
             ax[ii].spines['right'].set_visible(False)
             ax[ii].spines['top'].set_visible(False)
             ax[ii].yaxis.set_ticks_position('left')
@@ -737,48 +723,6 @@ class BestAnalogs():
 
 # -------------------------------------------------------------------------------
 
-    #### needs updating (time of prediction)
-
-    def plot_range_change(self, soi_model, soi_member, variable, n_analogs, leadstep=1, savename=None):
-        ### compute the reduction in the range of predictions compared to using all analogs
-        settings = rexp.Experiments().get_experiment(self.experiment_name)
-        if savename is None:
-            savename = self.experiment_name+'_range_change.pdf'
-            
-        # get the range for the best analogs and for all analogs
-        all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable)
-        _, _, pmin, pmax = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep)
-        range_diff = (all_max - pmax) + (pmin - all_min)
-        # interpolate so it can be divided at zero by color -- probably a better way, but this works for now
-        x = self.prediction_dict['targets']['time.year']
-        newx = np.linspace(x.min(), x.max(), x.size**2)
-        newy = np.interp(newx, x, range_diff)
-        # make the figure
-        fig, ax = plt.subplots(1, 1, figsize=(14,5))
-        ax.axhline(0, ls=':', alpha=0.5, color=c_midnight, lw=3)
-        ax.axhline(np.nanmean(range_diff), c=c_sunshine, lw=2.5, label='mean range change',
-                   path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        plt.plot(np.ma.masked_array(newx, mask=newy < 0), np.ma.masked_array(newy, mask=newy < 0), label='range decrease',
-                lw=2.5, c=c_flatirons, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        plt.plot(np.ma.masked_array(newx, mask=newy >= 0), np.ma.masked_array(newy, mask=newy >= 0), label='range increase',
-                lw=2.5, c=c_skyline, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        leg = ax.legend(loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
-        
-        ax.set_xlabel('prediction year', fontsize=18)
-        ax.set_ylabel(settings['region']+'\n'+variable, fontsize=18)
-        ax.set_title(self.experiment_name, fontsize=18)
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.yaxis.set_ticks_position('left')
-        ax.xaxis.set_ticks_position('bottom')    
-        ax.patch.set_facecolor('none')
-        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
-
-        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
-        plt.show()
-
-# -------------------------------------------------------------------------------
-
     def plot_model_distribution(self, soi_model, soi_member, variable, n_analogs, savename=None):
         # plot the number of times each model was selected as a top n_analogs analog
         if savename is None:
@@ -897,6 +841,7 @@ class BestAnalogs():
         
 # -------------------------------------------------------------------------------
 
+    # TODO: this needs to be fixed
     def plot_selected_times(self, soi_model, soi_member, n_analogs, roll_years, savename=None):
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         if savename is None:
@@ -956,7 +901,7 @@ class BestAnalogs():
 # -------------------------------------------------------------------------------
 
     def plot_constrained_prediction(self, soi_model, soi_member, variable, n_analogs, max_year, savename=None):
-        ####### change this to only pass pre max_year analogs (will be much faster) ########
+        # TODO: change this to only pass pre max_year analogs (will be much faster)
         # get the settings so the region name can be used in the figure
         settings = rexp.Experiments().get_experiment(self.experiment_name)
         leadtime = settings['leadtime']
@@ -1052,28 +997,8 @@ class BestAnalogs():
 # -------------------------------------------------------------------------------
 
     ###################################################################################
-    # plot the worst lat/lon to give a sense of how well it is doing -- will have to
-    # wait to do this until I run something with a target that isn't averaged over 
-    # a region, but it will be similar to the above figures
-    ###################################################################################
-        
-# -------------------------------------------------------------------------------
-
-    ###################################################################################
-    # add function to threshold masks? edge detection even?
-    ###################################################################################
-
-# -------------------------------------------------------------------------------
-
-    ###################################################################################
     # add function to find the average number of leadsteps it takes to switch to
     # a new (set of) analogs -- basically how far out can we go on average
-
-    # add function to get n best analog targets with specific leadstep
-    # # use these best indices to get the corresponding analog targets, (which are already offset by one year)
-    #     best_analogs = np.zeros([leadstep, n_analogs])
-    #     for jj in range(n_analogs):
-    #         best_analogs[:, jj] = target_analogs.isel(sample=np.arange(ind_analogs[jj], ind_analogs[jj]+leadstep)).tas.to_numpy()
     ###################################################################################
 
 # -------------------------------------------------------------------------------

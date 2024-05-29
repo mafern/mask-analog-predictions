@@ -20,13 +20,8 @@ tf.get_logger().setLevel('ERROR')
 __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
 
-
-
-# incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-
-# try sample weighting on the target distance (inverse)
-
-
+# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
+# TODO: try sample weighting on the target distance (inverse)
 
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
     ""

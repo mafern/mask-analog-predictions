@@ -38,10 +38,8 @@ def process_data(experiment_settings, overwrite_data=False):
     # for each of the split sets (analog, training, validation, testing)
     for split_set in split.keys():
         try:
-            ###################################################################################
-            # pretty stupid switch to make try fail if overwrite_data is True
+            # TODO: pretty stupid switch to make try fail if overwrite_data is True, but works for now
             1/(overwrite_data-1)
-            ###################################################################################
             
             # try loading pickle files which are dictionaries with both inputs and target
             # for each of the different split sets (analog, training, validation, testing)
@@ -107,9 +105,7 @@ def process_data(experiment_settings, overwrite_data=False):
                                                         dim="member", coords="minimal")
                 
             # flatten variables into single dataset (if there is more than one variable)
-            ###################################################################################
-            ### this could be problematic if the resolution for the variables are different
-            ###################################################################################
+            # TODO: this could be problematic if the resolution for the variables are different -- add support for this case
             if len(experiment_settings["variable_list"]) > 1:
                 current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
                 current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
