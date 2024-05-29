@@ -22,8 +22,10 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
         print('----------------------------------------------------------------')
         print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
         
-        # get the seed list and initialize the mask lists
-        seed = list(exp_settings["seed"])
+        # get the seed list (ensure it is a list) and initialize the mask lists
+        seed = exp_settings["seed"]
+        if not isinstance(seed, list):
+            seed = [seed,]
         raw_masks, masks = [], []
         if models is not list:
             models = [models,]
@@ -44,7 +46,7 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
             data_var_dict[var] = (["seed", "lat", "lon"], np.array(masks)[:, ii])
         mask = xr.Dataset(
             data_vars=data_var_dict,
-            coords=dict(seed=seed[ii], lat=lat, lon=lon)
+            coords=dict(seed=seed, lat=lat, lon=lon)
         )
         mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         data_var_dict = {}
@@ -52,7 +54,7 @@ def make_mask(experiment_name, models, processed_data, overwrite_mask=False):
             data_var_dict[var] = (["seed", "lat", "lon"], np.array(raw_masks)[:, ii])
         mask = xr.Dataset(
             data_vars=data_var_dict,
-            coords=dict(seed=seed[ii], lat=lat, lon=lon)
+            coords=dict(seed=seed, lat=lat, lon=lon)
         )
         mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
     
