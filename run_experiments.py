@@ -252,12 +252,14 @@ class Experiments():
         testing_inputs = np.transpose(testing_inputs, (0, 3, 1, 2))
         
         models = []
-        for seed in list(experiment_settings["seed"]):
+        seeds = list(experiment_settings["seed"])
+        for seed in seeds:
             # ensure model names are consistent, etc.
             tf.keras.backend.clear_session()
             np.random.seed(seed)
             random.seed(seed)
             tf.random.set_seed(seed)
+            experiment_settings["seed"] = seed
 
             # build the full model for learning the mask: mask, dissimilarity, prediction models
             model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs])
