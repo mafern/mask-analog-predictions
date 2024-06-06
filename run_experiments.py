@@ -2,8 +2,7 @@ import json
 import numpy as np
 import os
 import glob
-import sys
-import make_mask as mask
+import xarray as xr
 import data_processing as dp
 import build_model
 import train_model
@@ -285,14 +284,83 @@ class Experiments():
     # -------------------------------------------------------------------------------
     
     def make_mask(self, experiment_name, overwrite_data=False, overwrite_model=False, overwrite_mask=False):
-        # function wrapping make_mask function from make_mask.py
         # get model (train or load) and the processed data
         models = self.train_experiment_model(experiment_name, overwrite_data=overwrite_data, overwrite_model=overwrite_model)
-        
         # get the mask (both a raw version 'raw_mask' and a scaled/masked version 'mask')
-        self.mask = mask.make_mask(experiment_name, models, self.processed_data, overwrite_mask=overwrite_mask)
+        self.mask = self._make_mask(experiment_name, models, self.processed_data, overwrite_mask=overwrite_mask)
         return self.mask
         
+    # -------------------------------------------------------------------------------
+
+    def _make_mask(self, experiment_name, models, processed_data, overwrite_mask=False):
+        """
+        description
+        """
+        # check if mask already exists and no overwrite has been requested
+        if not os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')) or overwrite_mask is True:
+            # either mask does not exist, or overwrite has been requested
+            
+            # get lat and lon and experiment settings
+            exp_settings = self.get_experiment(experiment_name)
+            lat, lon = processed_data['analog']['lat'], processed_data['analog']['lon']
+            vars = np.array(processed_data['analog']['inputs'].data_vars)
+            print('----------------------------------------------------------------')
+            print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
+            
+            # get the seed list (ensure it is a list) and initialize the mask lists
+            seed = exp_settings["seed"]
+            if seed is not list:
+                seed = [seed,]
+            raw_masks, masks = [], []
+            if models is not list:
+                models = [models,]
+            for ii, model in enumerate(models):
+                # Get both the raw and scaled (masked, scale to mean=1) mask and save as a netcdf file
+                raw_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
+                raw_mask = raw_mask.reshape(vars.size, lat.size, lon.size)
+                # get land or ocean mask (or neither)
+                geomask = processed_data['analog']['land_ocean_mask'].to_numpy()
+                mask = self.scale_mask(raw_mask, geomask)
+                # append each seed (model) mask to the lists            
+                raw_masks.append(raw_mask)
+                masks.append(mask)
+            
+            # save the mask as netcdf with lat and lon coordinates (raw and scaled)
+            data_var_dict = {}
+            for ii, var in enumerate(vars):
+                data_var_dict[var] = (["seed", "lat", "lon"], np.array(masks)[:, ii])
+            mask = xr.Dataset(
+                data_vars=data_var_dict,
+                coords=dict(seed=seed, lat=lat, lon=lon)
+            )
+            mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
+            data_var_dict = {}
+            for ii, var in enumerate(vars):
+                data_var_dict[var] = (["seed", "lat", "lon"], np.array(raw_masks)[:, ii])
+            mask = xr.Dataset(
+                data_vars=data_var_dict,
+                coords=dict(seed=seed, lat=lat, lon=lon)
+            )
+            mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
+        
+        # no need to get data, build/train model, or make/save mask -- just load the existing mask
+        else:
+            print('loading pre-saved mask')
+            mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')).squeeze()
+            
+        return mask
+
+    # -------------------------------------------------------------------------------
+
+    def scale_mask(self, weighted_mask, land_ocean_mask):
+        # Set masked values to zero
+        weighted_mask = weighted_mask * land_ocean_mask
+        # Re-scale so the mean weight is 1
+        weighted_mask = weighted_mask / np.nansum(weighted_mask) * np.nansum(land_ocean_mask)
+        # Set masked values to the 0
+        # weighted_mask = np.nan_to_num(weighted_mask)
+        return weighted_mask
+
     # -------------------------------------------------------------------------------
     # -------------------------------------------------------------------------------    
             
@@ -339,21 +407,24 @@ class Experiments():
         print(function_list)
     
     # -------------------------------------------------------------------------------
-        
+
     @property
     def list_variables(self):
-        ###################################################################################
-        # TODO: only looking in monthly for now -- update to look in yearly, daily
-        ###################################################################################
-        resolution_dictionary = {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81]}
-        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/*'))
-        models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
-        # initialize list
-        allvars = []
-        for model in models:
-            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, '*/'))
-            model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
-            print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[model])
-        
+        resolution_dictionary = {
+            "daily": {},
+            "monthly": {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81]},
+            "yearly": {'BEST': [2.5, 2.5], 'ERA5': [2.5, 2.5], 'GISTEMP': [2.5, 2.5], 'GPCC': [1, 1], 'UDEL': [0.5, 0.5]}}
+
+        for cadence in ['daily', 'monthly', 'yearly']:
+            models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence+'/*'))
+            models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
+            # initialize list
+            allvars = []
+            print('----------', cadence, '----------')
+            for model in models:
+                model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence, model, '*/'))
+                model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
+                n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence, model, model_vars[i], '*'))) for i in range(len(model_vars))]
+                print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[cadence][model])
+            
         
