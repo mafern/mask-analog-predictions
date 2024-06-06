@@ -20,6 +20,9 @@ import copy
 # TODO: figure out a good way to reuse libraries (avoid reprocessing if possible) -- same for mask training
 # TODO: explore multiple masks -- different leadtimes to get a coherent time series (starting from a single soi time rather than rolling that forward and projecting 1 year over and over)
 # TODO: try earth mover's distance to determine quality of prediction
+# TODO: add save option for predictions (instead of getting the targets every time)
+# TODO: add function to use a thresholded mask, probably by percentile
+# TODO: add some extremes functions (or let McKenna do this)
 
 
 # define some colors and cmaps -- nuggets
