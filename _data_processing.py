@@ -14,11 +14,8 @@ import xesmf as xe
 import regionmask
 import json
 
-
-# TODO: change window (make an option) (see Yeager 2018)
-# TODO: get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
+# TODO: add option: get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
 # TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-
 
 def route_by_filetype(file_type, file):
     # TODO: add support for other file types
@@ -276,8 +273,6 @@ class DataProcessing():
                     # shift time coordinates
                     new_times = xr.CFTimeIndex(self.data_dictionary[var][model].time.values).shift(n=roll_period+1, freq=self.period)
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=new_times)
-                # TODO: is there a better way to do this? currently removes the roll_period - 1 entries from the start
-                # or end depending on sign (works for now)
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(abs(roll_period)-1))
                 else:
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(roll_period-1))+1))
@@ -395,12 +390,10 @@ class DataProcessing():
             for model in self.data_dictionary[var].keys():
                 # construct the regridder using xESMF: https://xesmf.readthedocs.io/en/latest/index.html
                 latlon_dict = {
-                    # TODO: update this to get the range directly from the data
                     "lat": np.arange(-90+0.5*resolutions[0], 90, resolutions[0]),
                     "lon": np.arange(0, 360, resolutions[1])
                 }
                 regridder = xe.Regridder(self.data_dictionary[var][model], xr.Dataset(latlon_dict), "bilinear", periodic=True)
-                # OPTIONS EXIST OTHER THAN BILINEAR: CONSERVATIVE, PATCH (SLOW), . . . 
                 # do the regridding
                 self.data_dictionary[var][model] = regridder(self.data_dictionary[var][model], keep_attrs=True)        
         
@@ -673,8 +666,6 @@ class DataProcessing():
     
     # -------------------------------------------------------------------------------
     
-    # TODO: only supports yearly data for baselining, update to allow for other timescales
-    # TODO: add print statement to show what it has done
     # TODO: explore dividing by the STD over the baseline period to normalize further
     def baseline_norm(self, baseline, var_list=None):
         """
@@ -686,12 +677,9 @@ class DataProcessing():
             - data_dictionary where each model has been normalized by the mean of the baseline
             over time and members.
         """
-        # if data is not yet yearly
-        if self.period[-1] != 'Y':
-            # make dataset yearly
-            self.smooth_time(period='1Y')
         if var_list is None:
             var_list = list(self.data_dictionary.keys())
+        print('baselining on', baseline, 'for variables:', *var_list)
         # for each requested variable
         for var in var_list:
             # for each model (get down to the xarray level from the dictionary)
