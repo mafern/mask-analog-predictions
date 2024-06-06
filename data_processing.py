@@ -8,7 +8,6 @@ import pickle
 from copy import deepcopy
 
 
-
 def process_data(experiment_settings, overwrite_data=False):
     """
     description
@@ -37,18 +36,10 @@ def process_data(experiment_settings, overwrite_data=False):
     processed_data = {}
     # for each of the split sets (analog, training, validation, testing)
     for split_set in split.keys():
-        try:
-            # TODO: pretty stupid switch to make try fail if overwrite_data is True, but works for now
-            1/(overwrite_data-1)
-            
-            # try loading pickle files which are dictionaries with both inputs and target
-            # for each of the different split sets (analog, training, validation, testing)
-            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle'), "rb") as filename:
-                processed_data[split_set] = pickle.load(filename)
-            print('loading pre-saved', split_set, 'dataset')
-
-        # if file does not exist, process the data and save
-        except:
+        # file to look for if preprocessing has been completed previously
+        processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle')
+        if overwrite_data or not os.path.exists(processed_data_file):
+            # file does not exist or overwrite has been requested
             # list of models to use for the analog set, and for the training/validation/testing sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
@@ -105,17 +96,31 @@ def process_data(experiment_settings, overwrite_data=False):
                                                         dim="member", coords="minimal")
                 
             # flatten variables into single dataset (if there is more than one variable)
-            # TODO: this could be problematic if the resolution for the variables are different -- add support for this case
             if len(experiment_settings["variable_list"]) > 1:
-                current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
-                current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
+                shape_list = [current_data["inputs"][var].shape[2:] for var in current_data["inputs"].keys()]
+                # check resolutions of all variables
+                if len(set(shape_list)) > 1:
+                    # multiple variables with different resolutions, rename for merging
+                    current_data["inputs"] = xr.merge([current_data["inputs"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["inputs"].keys()], join='inner')
+                    current_data["target"] = xr.merge([current_data["target"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["target"].keys()], join='inner')
+                    # get latitude and longitude for each variable
+                    current_data['lat'] = {var: current_data['inputs']['lat_'+var].to_numpy() for var in current_data["inputs"].keys()}
+                    current_data['lon'] = {var: current_data['inputs']['lon_'+var].to_numpy() for var in current_data["inputs"].keys()}
+                else:
+                    # multiple variables, but same resolution for all
+                    current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
+                    current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
+                    # get latitude and longitude
+                    current_data['lat'] = current_data['inputs'].lat.to_numpy()
+                    current_data['lon'] = current_data['inputs'].lon.to_numpy()
+            # if there is only a single variable, continue on
             else:
                 current_data["inputs"] = current_data["inputs"][var]
-                current_data["target"] = current_data["target"][var]
-                
-            # get latitude and longitude, which will be useful
-            current_data['lat'] = current_data['inputs'].lat.to_numpy()
-            current_data['lon'] = current_data['inputs'].lon.to_numpy()
+                current_data["target"] = current_data["target"][var]    
+                # get latitude and longitude
+                current_data['lat'] = current_data['inputs'].lat.to_numpy()
+                current_data['lon'] = current_data['inputs'].lon.to_numpy()
+
             # if a land or ocean mask was used, carry that over
             if experiment_settings['mask']:
                 current_data['land_ocean_mask'] = input_raw.final_mask
@@ -128,6 +133,14 @@ def process_data(experiment_settings, overwrite_data=False):
 
             # update dictionary to return
             processed_data[split_set] = current_data
+        else:
+            # files does exist and overwrite has not been requested
+
+            # load pickle files which are dictionaries with both inputs and target
+            # for each of the different split sets (analog, training, validation, testing)
+            with gzip.open(processed_data_file, "rb") as filename:
+                processed_data[split_set] = pickle.load(filename)
+            print('loading pre-saved', split_set, 'dataset')
     
     return processed_data
 
