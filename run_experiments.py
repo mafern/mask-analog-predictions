@@ -309,11 +309,9 @@ class Experiments():
             
             # get the seed list (ensure it is a list) and initialize the mask lists
             seed = exp_settings["seed"]
-            if seed is not list:
+            if type(seed) is not list:
                 seed = [seed,]
             raw_masks, masks = [], []
-            if models is not list:
-                models = [models,]
             for ii, model in enumerate(models):
                 # Get both the raw and scaled (masked, scale to mean=1) mask and save as a netcdf file
                 raw_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
