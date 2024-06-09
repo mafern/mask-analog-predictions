@@ -89,9 +89,7 @@ class BestAnalogs():
 
         # save the experiment_name, load the corresponding mask
         self.experiment_name = experiment_name
-        # TODO: currently uses the mean mask over all seeds, may want to try something else
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
-        self.mask = self.mask_object.mean("seed").squeeze()
         
         # get the training, validation, and testing data so they can be avoided in the soi and analogs
         self.used_members = np.empty(0, dtype=int)
@@ -299,13 +297,13 @@ class BestAnalogs():
         try:
             soi_index = np.where((self.prediction_dict['inputs'].model == soi_model) *
                                  (self.prediction_dict['inputs'].member == soi_member))[0][0]
-            soi_inputs = self.prediction_dict['inputs'].isel(member=soi_index) * self.mask
+            soi_inputs = self.prediction_dict['inputs'].isel(member=soi_index) * self.mask_object
         except:
             print('that SOI is not in the already processed prediction_dict')
             
         # now remove this particular soi member from the analog library
         analog_inds = np.setdiff1d(np.arange(self.prediction_dict['inputs'].member.size), soi_index)
-        weighted_analogs = self.prediction_dict['inputs'].isel(member=analog_inds) * self.mask
+        weighted_analogs = self.prediction_dict['inputs'].isel(member=analog_inds) * self.mask_object
 
         # set up multiprocessing to get the best analogs for this soi (all times)
         if n_proc is None:
@@ -974,12 +972,77 @@ class BestAnalogs():
             )
             ax.add_feature(land_feature)
 
-            image = ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, self.mask_object[var].mean(axis=0),
+            image = ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, self.mask_object[var],
                                   transform=data_crs, cmap=cmap, vmin=vmin, vmax=vmax)
             if colorbar:
                 cb = plt.colorbar(image, shrink=0.75, orientation="horizontal", pad=0.02)
             plt.savefig(self.fig_path+var+'_'+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
             plt.show()
+
+# -------------------------------------------------------------------------------
+
+    def make_mask_gif(self, cmap=blue_cmap):
+        import imageio
+        # get the files for this experiment
+        mask_training_epochs_path = os.path.join(os.path.dirname(__file__), 'figures', self.experiment_name+'_train', '*')
+        files = np.sort(glob.glob(mask_training_epochs_path))
+        frames = np.vstack([np.loadtxt(file).reshape(1, self.mask_object.lat.size, self.mask_object.lon.size) for file in files])
+
+        images = []
+        for ii, frame in enumerate(frames):
+            fig = plt.figure(figsize=(9, 9))
+            ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=215.))
+            data_crs = ccrs.PlateCarree()
+            
+            land_feature = cfeature.NaturalEarthFeature(
+                category='physical',
+                name='land',
+                scale='110m',
+                facecolor='none',
+                edgecolor='k',
+                linewidth=1.5,
+            )
+            ax.add_feature(land_feature)
+
+            ax.pcolormesh(self.mask_object.lon, self.mask_object.lat, frame,
+                          transform=data_crs, cmap=cmap, vmin=frames.min(), vmax=frames.max())
+            figure_name = os.path.join(os.path.dirname(__file__), 'figures', self.experiment_name+'_train', 'mask_figure'+str(ii).zfill(5)+'.png')
+            plt.savefig(figure_name, dpi=400, bbox_inches='tight', pad_inches=0.1)
+            images.append(imageio.imread(figure_name))
+            plt.close()
+            os.remove(figure_name)
+
+        imageio.mimsave(os.path.join(os.path.dirname(__file__), 'figures', self.experiment_name+'_gif.gif'), images, fps=12)
+
+# -------------------------------------------------------------------------------
+
+    def plot_training_history(self, savename=None):
+        # get the settings so the region name can be used in the figure
+        settings = rexp.Experiments().get_experiment(self.experiment_name)
+        if savename is None:
+            savename = self.experiment_name+'_training_history.pdf'
+        # find the history file
+        history_file = glob.glob(os.path.join(os.path.dirname(__file__), 'saved_models', self.experiment_name, '*_history.pickle'))[0]
+        # load the history
+        with open(history_file, 'rb') as file:
+            history = pickle.load(file)
+        # plot the training and validation losses versus epoch
+        fig, ax = plt.subplots(1, 1, figsize=(11,9))
+        ax.plot(np.arange(len(history['loss'])), history['loss'], lw=2, color=c_powered, label='training loss')
+        ax.plot(np.arange(len(history['loss'])), history['val_loss'], lw=2, color=c_energygreen, label='validation loss')
+        ax.set_ylim([0.99*np.min(history['loss']), 1.05*np.sort(history['val_loss'])[-3]])
+        ax.legend(loc='upper right', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
+        ax.set_xlabel('epoch', fontsize=18)
+        ax.set_ylabel('loss', fontsize=18)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.yaxis.set_ticks_position('left')
+        ax.xaxis.set_ticks_position('bottom')    
+        ax.patch.set_facecolor('none')
+        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
+
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.show()
 
 # -------------------------------------------------------------------------------
         
