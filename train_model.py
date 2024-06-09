@@ -101,6 +101,18 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         # uses this for all training batches (static validation data)
         gen.close()
 
+        class PrintCallback(tf.keras.callbacks.Callback):
+            def on_epoch_begin(self, epoch, logs=None):
+                savepath = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train')
+                if not os.path.exists(savepath):
+                    os.makedirs(savepath)
+                current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
+                print('')
+                print(current_mask)
+                print('')
+                if epoch % 2 == 0:
+                    np.savetxt(os.path.join(savepath, 'mask_epoch'+str(epoch).zfill(5)), current_mask)
+
         # train the model
         start_time = time.time()
         history = model.fit(
@@ -108,7 +120,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
             validation_data=(x_val, y_val),
             steps_per_epoch=soi_train_input.shape[0]//settings["batch_size"],
             epochs=settings["max_epochs"],
-            callbacks=[earlystopping, ],
+            callbacks=[earlystopping, PrintCallback()],
             verbose=1,
         )
         stop_time = time.time()
