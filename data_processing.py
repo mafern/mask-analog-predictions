@@ -31,6 +31,7 @@ def process_data(experiment_settings, overwrite_data=False):
     rng_seed = np.random.default_rng(seed)
     # total number of members requested
     member_rng = np.arange(np.sum(list(split.values())))
+    period = experiment_settings['data_period']
     
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
@@ -43,8 +44,18 @@ def process_data(experiment_settings, overwrite_data=False):
             # list of models to use for the analog set, and for the training/validation/testing sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
-            else:
+                if type(experiment_settings['data_period']) is list:
+                    period = experiment_settings['data_period'][0]
+                    # model from each of the analog and SOI lists that have the least members sets the potential members to grab
+                    n_analog_min = np.min([len(glob.glob(os.path.join(os.path.dirname(__file__), "raw_data", period, mod, var, '*'))) for mod in model_list for var in experiment_settings['variable_list']])
+                    member_rng = np.arange(n_analog_min)
+                    print(period, member_rng, n_analog_min)
+            if split_set == 'training':
                 model_list = experiment_settings['soi_models']
+                if type(experiment_settings['data_period']) is list:
+                    period = experiment_settings['data_period'][1]
+                    n_soi_min = np.min([len(glob.glob(os.path.join(os.path.dirname(__file__), "raw_data", period, mod, var, '*'))) for mod in model_list for var in experiment_settings['variable_list']])
+                    member_rng = np.arange(n_soi_min)
 
             # randomly select ensembles members (which may not be all available data)
             rnd_inds = rng_seed.choice(member_rng, split[split_set], replace=False, shuffle=False)
@@ -52,7 +63,7 @@ def process_data(experiment_settings, overwrite_data=False):
             member_rng = np.setdiff1d(member_rng, rnd_inds)
             
             # load the appropriate ensemble members for the requested models/variables
-            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], experiment_settings['data_period'], rnd_inds)
+            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], period, rnd_inds)
             # deepcopy a version for the outputs
             output_raw = deepcopy(input_raw)
 
