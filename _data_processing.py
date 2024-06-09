@@ -14,7 +14,6 @@ import xesmf as xe
 import regionmask
 import json
 
-# TODO: add option: get rid of regional_mean step and take the map difference mse (rather than the differences of two average values)
 # TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
 
 def route_by_filetype(file_type, file):
