@@ -1,7 +1,7 @@
-import numpy as np
+import xarray as xr
 import tensorflow as tf
 import metrics
-import gc
+import os
 
 __author__ = "Jamin K. Rader, Elizabeth A. Barnes"
 __version__ = "30 March 2023"
@@ -47,11 +47,22 @@ def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
         # i.e. between instantiation and call
         # defines self.bias which is then used in the call
         def build(self, input_shape):
-            self.bias = self.add_weight('bias',
-                                        shape=(input_shape[1:]),
-                                        initializer=mask_initial_value,
-                                        trainable=True,
-                                        constraint=tf.keras.constraints.NonNeg(),)
+            mask_test_path = os.path.join(os.path.dirname(__file__), 'saved_masks', mask_initial_value+'_raw_mask.nc')
+            if os.path.exists(mask_test_path):
+                self.bias = self.add_weight('bias',
+                                            shape=(input_shape[1:]),
+                                            initializer="ones",
+                                            trainable=True,
+                                            constraint=tf.keras.constraints.NonNeg(),)
+                # load the requested raw mask from xarray into a numpy array
+                raw_mask = xr.load_dataarray(mask_test_path).to_numpy().flatten()
+                self.bias.assign(self.bias.numpy() * raw_mask)
+            else:
+                self.bias = self.add_weight('bias',
+                                            shape=(input_shape[1:]),
+                                            initializer=mask_initial_value,
+                                            trainable=True,
+                                            constraint=tf.keras.constraints.NonNeg(),)
         # redefine call -- normally this returns the inputs
         # in our case, it returns a x-shaped bias
         def call(self, x):
@@ -157,7 +168,7 @@ def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed
 # Combining all three models
 def build_interp_model(settings, x_train):
     ""
-    
+
     # model takes in soi and analog and returns weighted versions as well as weight mask
     mask_model, soi_input, analog_input = make_weights_model(x_train,
                                                              mask_model_act=settings["mask_activation"],
