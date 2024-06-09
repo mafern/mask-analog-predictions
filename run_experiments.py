@@ -96,7 +96,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=[0]):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -136,7 +136,7 @@ class Experiments():
                 - mask_l1: l1 regularization for the mask, default is 0 (off)
                 - mask_l2: l2 regularization for the mask, default is 0 (off)
                 - norm_weights: whether to normalize the mask weights, default is True
-                - seed: list of random seeds to use in the member selection and the network training
+                - seed: random seed to use in the member selection and the network training
                 
         Returns a dictionary containing all of the requested experiment settings, including the processing steps (in a sensable order).
         """
@@ -145,7 +145,7 @@ class Experiments():
         assert leadtime > 0, "leadtime should be positive for projections"
         assert roll_period > 0 or roll_period is False, "roll_period should positive or False"
         # assert np.isin(mask, ['land', 'ocean', False]), "mask should be 'land' or 'ocean' or False"
-        assert np.isin(data_period, ['daily', 'monthly', 'yearly']), "data_period must be 'daily' or 'monthly' or 'yearly'"
+        # assert np.isin(data_period, ['daily', 'monthly', 'yearly']), "data_period must be 'daily' or 'monthly' or 'yearly'"
         
         # fill a dictionary with the data split values
         split = {"analog": split[0], "training": split[1], "validation": split[2], "testing": split[3]}
@@ -250,36 +250,31 @@ class Experiments():
         validation_inputs = np.transpose(validation_inputs, (0, 3, 1, 2))
         testing_inputs = np.transpose(testing_inputs, (0, 3, 1, 2))
         
-        models = []
-        seeds = list(experiment_settings["seed"])
-        for seed in seeds:
-            # ensure model names are consistent, etc.
-            tf.keras.backend.clear_session()
-            np.random.seed(seed)
-            random.seed(seed)
-            tf.random.set_seed(seed)
-            experiment_settings["seed"] = seed
+        # ensure model names are consistent, etc.
+        tf.keras.backend.clear_session()
+        np.random.seed(experiment_settings["seed"])
+        random.seed(experiment_settings["seed"])
+        tf.random.set_seed(experiment_settings["seed"])
 
-            # build the full model for learning the mask: mask, dissimilarity, prediction models
-            model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs])
+        # build the full model for learning the mask: mask, dissimilarity, prediction models
+        model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs])
 
-            # train the model, which will check if the model is already saved first
-            # (then load if it does, train and save if it does not)
-            model, fit_summary, history = train_model.train_model(
-                experiment_settings,
-                model,
-                analog_inputs,
-                analog_target,
-                training_inputs,
-                training_target,
-                validation_inputs,
-                validation_target,
-                overwrite_model=overwrite_model
-            )
-            pprint(fit_summary, width=80)
-            
-            models.append(model)
-        return models
+        # train the model, which will check if the model is already saved first
+        # (then load if it does, train and save if it does not)
+        model, fit_summary, history = train_model.train_model(
+            experiment_settings,
+            model,
+            analog_inputs,
+            analog_target,
+            training_inputs,
+            training_target,
+            validation_inputs,
+            validation_target,
+            overwrite_model=overwrite_model
+        )
+        pprint(fit_summary, width=80)
+        
+        return model
 
     # -------------------------------------------------------------------------------
     
@@ -292,7 +287,7 @@ class Experiments():
         
     # -------------------------------------------------------------------------------
 
-    def _make_mask(self, experiment_name, models, processed_data, overwrite_mask=False):
+    def _make_mask(self, experiment_name, model, processed_data, overwrite_mask=False):
         """
         description
         """
@@ -300,44 +295,34 @@ class Experiments():
         if not os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')) or overwrite_mask is True:
             # either mask does not exist, or overwrite has been requested
             
-            # get lat and lon and experiment settings
-            exp_settings = self.get_experiment(experiment_name)
+            # get lat and lon
             lat, lon = processed_data['analog']['lat'], processed_data['analog']['lon']
             vars = np.array(processed_data['analog']['inputs'].data_vars)
             print('----------------------------------------------------------------')
             print('retrieving mask and saving to', os.path.join('masks', experiment_name+'_mask.nc'))
             
-            # get the seed list (ensure it is a list) and initialize the mask lists
-            seed = exp_settings["seed"]
-            if type(seed) is not list:
-                seed = [seed,]
-            raw_masks, masks = [], []
-            for ii, model in enumerate(models):
-                # Get both the raw and scaled (masked, scale to mean=1) mask and save as a netcdf file
-                raw_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
-                raw_mask = raw_mask.reshape(vars.size, lat.size, lon.size)
-                # get land or ocean mask (or neither)
-                geomask = processed_data['analog']['land_ocean_mask'].to_numpy()
-                mask = self.scale_mask(raw_mask, geomask)
-                # append each seed (model) mask to the lists            
-                raw_masks.append(raw_mask)
-                masks.append(mask)
+            # Get both the raw and scaled (masked, scale to mean=1) mask and save as a netcdf file
+            raw_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
+            raw_mask = raw_mask.reshape(vars.size, lat.size, lon.size)
+            # get land or ocean mask (or neither)
+            geomask = processed_data['analog']['land_ocean_mask'].to_numpy()
+            mask = self.scale_mask(raw_mask, geomask)
             
             # save the mask as netcdf with lat and lon coordinates (raw and scaled)
             data_var_dict = {}
             for ii, var in enumerate(vars):
-                data_var_dict[var] = (["seed", "lat", "lon"], np.array(masks)[:, ii])
+                data_var_dict[var] = (["lat", "lon"], np.array(mask)[:, ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
-                coords=dict(seed=seed, lat=lat, lon=lon)
+                coords=dict(lat=lat, lon=lon)
             )
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
             data_var_dict = {}
             for ii, var in enumerate(vars):
-                data_var_dict[var] = (["seed", "lat", "lon"], np.array(raw_masks)[:, ii])
+                data_var_dict[var] = (["lat", "lon"], np.array(raw_mask)[:, ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
-                coords=dict(seed=seed, lat=lat, lon=lon)
+                coords=dict(lat=lat, lon=lon)
             )
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
         
