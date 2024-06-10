@@ -4,11 +4,25 @@ import os
 import glob
 import xarray as xr
 import data_processing as dp
+import pickle
 import build_model
 import train_model
 import random
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import matplotlib.colors as clr
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 from pprint import pprint
+
+# define cmap for masks and some colors
+c_energygreen = '#CFFC00'
+c_flowertrial = '#E56A54'
+c_powered = '#7E5475'
+c_horsetooth = '#008FB3'
+c_stalwart = '#105456'
+blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
+blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
 
 
 def get_settings(experiment_name):
@@ -41,6 +55,7 @@ class Experiments():
         try:
             self.filename = filename
             self.experiments = json.load(open(os.path.join(os.path.dirname(__file__), self.filename), 'r'))
+            self.fig_path = os.path.join(os.path.dirname(__file__), 'figures/')
             self.keys = list(self.experiments.keys())
         except ValueError:
             print("No experiment file found: ", self.filename)
@@ -96,7 +111,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, prediction_nodes, prediction_activation, learning_rate, mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, region=False, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, avg_target=True, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jamin', mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -106,13 +121,14 @@ class Experiments():
                 - soi_models: which models to use for the training, validation, and testing splits (run self.list_variables to see available options)
                 - leadtime: time shift between inputs and target (should be a positive integer)
                 - split: list with integer number of members to include in each split of the data (order should be: analog, training, validation, testing)
-                - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer #### GIVE THIS A DEFAULT ONCE A GOOD DEFAULT IS DETERMINED
-                - prediction_activation: activation function used for the network #### GIVE THIS A DEFAULT ONCE A GOOD DEFAULT IS DETERMINED
-                - learning_rate: step size for the training #### GIVE THIS A DEFAULT ONCE A GOOD DEFAULT IS DETERMINED
+                - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
+                - method: which method to use, 'jamin' (input mse predicts region averaged target mse), 'jacob' (input mse predicts target mse), and 'martin' (input mse predicts target map, loss is mse)
                 - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
-                - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False (default).
+                - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
+                - prediction_activation: activation function used for the network
+                - learning_rate: step size for the training
                 - output_period: either resample the data to a new period (pass a string such as "2M"), resample on the same period (pass None) or do nothing (pass False, default)
                 - data_period: string containing the period for the raw data, should be 'daily' or 'monthly' (default) or 'yearly'
                 - roll_period: calculate rolling mean for the data (pass a positive integer for number of time steps to roll), or do nothing (pass False, default)
@@ -124,7 +140,6 @@ class Experiments():
                 - baseline: normalize the datasets by a baseline period (pass a list of a start and end year for the baseline, e.g. [1951, 1980]) or do nothing (pass False, default)
                 - remove_trend: whether to remove the trend via the ensemble mean (pass True) or do nothing (pass False, default)
                 - remove_seasonality: whether to remove the seasonal cycle (pass True), or do nothing (pass False, default)
-                - avg_target: whether to average the target over lat/lon for all variables (pass True), or do nothing (pass False, default)
                 - loss: loss function to use in training, default is 'mse'
                 - patience: number of steps (epochs) to take without improving loss before early stopping, default is 50
                 - min_delta: minimum change in the loss to qualify as an improvement, default is 0.0005
@@ -144,8 +159,7 @@ class Experiments():
         assert experiment_name not in self.keys, "experiment with that name already exists"
         assert leadtime > 0, "leadtime should be positive for projections"
         assert roll_period > 0 or roll_period is False, "roll_period should positive or False"
-        # assert np.isin(mask, ['land', 'ocean', False]), "mask should be 'land' or 'ocean' or False"
-        # assert np.isin(data_period, ['daily', 'monthly', 'yearly']), "data_period must be 'daily' or 'monthly' or 'yearly'"
+        assert np.all(np.isin(data_period, ['daily', 'monthly', 'yearly'])), "data_period must be 'daily' or 'monthly' or 'yearly'"
         
         # fill a dictionary with the data split values
         split = {"analog": split[0], "training": split[1], "validation": split[2], "testing": split[3]}
@@ -172,7 +186,7 @@ class Experiments():
                                "smooth_space(experiment_settings['resolutions'])": resolutions,
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
-                               "regional_mean(experiment_settings['variable_list'])": avg_target,
+                               "regional_mean(experiment_settings['variable_list'])": method == 'jamin',
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(-experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
@@ -200,7 +214,13 @@ class Experiments():
         # now add the processing lists
         experiment_settings[experiment_name]["inputs_proc_steps"] = inputs_proc_steps
         experiment_settings[experiment_name]["target_proc_steps"] = target_proc_steps
-        
+
+        # set target shape based on the method
+        if method == 'jamin':
+            experiment_settings['avg_target'] = True
+        else:
+            experiment_settings['avg_target'] = False
+            
         print('experiment_settings are:')
         print(experiment_settings)    
         return experiment_settings
@@ -222,10 +242,10 @@ class Experiments():
                     pass
         print('----------------------------------------------------------------')
         # stack/separate into inputs and target for the analog, training, validation, and testing sets
-        analog_inputs, analog_target = dp.neural_network_stack(self.processed_data['analog'])
-        training_inputs, training_target = dp.neural_network_stack(self.processed_data['training'])
-        validation_inputs, validation_target = dp.neural_network_stack(self.processed_data['validation'])
-        testing_inputs, testing_target = dp.neural_network_stack(self.processed_data['testing'])
+        analog_inputs, analog_target = dp.neural_network_stack(self.processed_data['analog'], experiment_settings)
+        training_inputs, training_target = dp.neural_network_stack(self.processed_data['training'], experiment_settings)
+        validation_inputs, validation_target = dp.neural_network_stack(self.processed_data['validation'], experiment_settings)
+        testing_inputs, testing_target = dp.neural_network_stack(self.processed_data['testing'], experiment_settings)
         # get the lat and lon ------ THIS ASSUMES THAT THE LAT AND LON ARE THE SAME BETWEEN THE ANALOG AND TRAINING SETS
         lat, lon = self.processed_data['analog']['lat'], self.processed_data['analog']['lon']
         print('----------------------------------------------------------------')
@@ -257,7 +277,7 @@ class Experiments():
         tf.random.set_seed(experiment_settings["seed"])
 
         # build the full model for learning the mask: mask, dissimilarity, prediction models
-        model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs])
+        model, _, _, _ = build_model.build_interp_model(experiment_settings, np.shape(training_target)[1:], [training_inputs, analog_inputs])
 
         # train the model, which will check if the model is already saved first
         # (then load if it does, train and save if it does not)
@@ -311,7 +331,7 @@ class Experiments():
             # save the mask as netcdf with lat and lon coordinates (raw and scaled)
             data_var_dict = {}
             for ii, var in enumerate(vars):
-                data_var_dict[var] = (["lat", "lon"], np.array(mask)[:, ii])
+                data_var_dict[var] = (["lat", "lon"], np.array(mask)[ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
                 coords=dict(lat=lat, lon=lon)
@@ -319,7 +339,7 @@ class Experiments():
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
             data_var_dict = {}
             for ii, var in enumerate(vars):
-                data_var_dict[var] = (["lat", "lon"], np.array(raw_mask)[:, ii])
+                data_var_dict[var] = (["lat", "lon"], np.array(raw_mask)[ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
                 coords=dict(lat=lat, lon=lon)
@@ -343,6 +363,101 @@ class Experiments():
         # Set masked values to the 0
         # weighted_mask = np.nan_to_num(weighted_mask)
         return weighted_mask
+    
+    # -------------------------------------------------------------------------------
+
+    def plot_mask(self, experiment_name, vmin=None, vmax=None, savename=None, cmap=blue_cmap, colorbar=True):
+        if savename is None:
+            savename = experiment_name+'_mask'
+
+        mask = self.make_mask(experiment_name)
+        for var in np.array(mask.data_vars):
+            
+            fig = plt.figure(figsize=(9, 9))
+            ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=215.))
+            data_crs = ccrs.PlateCarree()
+            
+            land_feature = cfeature.NaturalEarthFeature(
+                category='physical',
+                name='land',
+                scale='110m',
+                facecolor='none',
+                edgecolor='k',
+                linewidth=1.5,
+            )
+            ax.add_feature(land_feature)
+
+            image = ax.pcolormesh(mask.lon, mask.lat, mask[var], transform=data_crs, cmap=cmap, vmin=vmin, vmax=vmax)
+            if colorbar:
+                cb = plt.colorbar(image, shrink=0.75, orientation="horizontal", pad=0.02)
+            plt.savefig(self.fig_path+savename+'_'+var+'.png', dpi=400, bbox_inches='tight', pad_inches=0.1)
+            plt.show()
+
+    # -------------------------------------------------------------------------------
+
+    def make_mask_gif(self, experiment_name, cmap=blue_cmap):
+        import imageio
+        # get mask
+        mask = self.make_mask(experiment_name)
+        # get the files for this experiment
+        mask_training_epochs_path = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train', '*')
+        files = np.sort(glob.glob(mask_training_epochs_path))
+        frames = np.vstack([np.loadtxt(file).reshape(1, mask.lat.size, mask.lon.size) for file in files])
+
+        images = []
+        for ii, frame in enumerate(frames):
+            fig = plt.figure(figsize=(9, 9))
+            ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=215.))
+            data_crs = ccrs.PlateCarree()
+            
+            land_feature = cfeature.NaturalEarthFeature(
+                category='physical',
+                name='land',
+                scale='110m',
+                facecolor='none',
+                edgecolor='k',
+                linewidth=1.5,
+            )
+            ax.add_feature(land_feature)
+
+            ax.pcolormesh(mask.lon, mask.lat, frame, transform=data_crs, cmap=cmap, vmin=frames.min(), vmax=frames.max())
+            figure_name = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train', 'mask_figure'+str(ii).zfill(5)+'.png')
+            plt.savefig(figure_name, dpi=400, bbox_inches='tight', pad_inches=0.1)
+            images.append(imageio.imread(figure_name))
+            plt.close()
+            os.remove(figure_name)
+
+        imageio.mimsave(os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_gif.gif'), images, fps=12)
+
+    # -------------------------------------------------------------------------------
+
+    def plot_training_history(self, experiment_name, savename=None):
+        # get the settings so the region name can be used in the figure
+        settings = self.get_experiment(experiment_name)
+        if savename is None:
+            savename = experiment_name+'_training_history.png'
+        # find the history file
+        history_file = glob.glob(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, '*_history.pickle'))[0]
+        # load the history
+        with open(history_file, 'rb') as file:
+            history = pickle.load(file)
+        # plot the training and validation losses versus epoch
+        fig, ax = plt.subplots(1, 1, figsize=(11,9))
+        ax.plot(np.arange(len(history['loss'])), history['loss'], lw=2, color=c_powered, label='training loss')
+        ax.plot(np.arange(len(history['loss'])), history['val_loss'], lw=2, color=c_energygreen, label='validation loss')
+        ax.set_ylim([0.99*np.min(history['loss']), 1.05*np.sort(history['val_loss'])[-3]])
+        ax.legend(loc='upper right', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
+        ax.set_xlabel('epoch', fontsize=18)
+        ax.set_ylabel('loss', fontsize=18)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.yaxis.set_ticks_position('left')
+        ax.xaxis.set_ticks_position('bottom')    
+        ax.patch.set_facecolor('none')
+        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
+
+        plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
+        plt.show()
 
     # -------------------------------------------------------------------------------
     # -------------------------------------------------------------------------------    

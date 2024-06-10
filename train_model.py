@@ -2,7 +2,6 @@ import time
 import numpy as np
 import silence_tensorflow.auto
 import tensorflow as tf
-import build_model
 import metrics
 import os
 import logging
@@ -16,10 +15,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # are not printed , 3 = INFO, WARNING, and ERROR messages are not printed
 tf.get_logger().setLevel('ERROR')
 
-
-__author__ = "Jamin K. Rader, Elizabeth A. Barnes"
-__version__ = "30 March 2023"
-
 # TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
 # TODO: try sample weighting on the target distance (inverse)
 
@@ -32,7 +27,10 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         # random subsamples of size batch_size
         i_soi = rng.choice(np.arange(0, soi_input.shape[0]), batch_size, replace=True)
         i_analog = rng.choice(np.arange(0, analog_input.shape[0]), batch_size, replace=True)
-        targets = metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog])
+        if settings['method'] == 'jacob':
+            targets = np.mean(metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog]), axis=(1, 2))
+        else:
+            targets = metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog])
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
 # -------------------------------------------------------------------------------
@@ -109,7 +107,6 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
                 current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
                 print('')
                 print(current_mask)
-                print('')
                 if epoch % 2 == 0:
                     np.savetxt(os.path.join(savepath, 'mask_epoch'+str(epoch).zfill(5)), current_mask)
 

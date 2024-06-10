@@ -17,12 +17,20 @@ def pred_range(y_true, y_pred):
 # -------------------------------------------------------------------------------
 
 def get_targets(settings, soi, analog):
-    target = get_analog_errors(soi, analog)
+    if settings['method'] == 'jacob':
+        target = get_analog_errors_sq(soi, analog)
+    else:
+        target = get_analog_errors_abs(soi, analog)
     return target
 
 # -------------------------------------------------------------------------------
 
-def get_analog_errors(soi, analog_prediction):
+def get_analog_errors_abs(soi, analog_prediction):
     return np.abs(soi - analog_prediction)
+
+# -------------------------------------------------------------------------------
+
+def get_analog_errors_sq(soi, analog_prediction):
+    return np.square(soi - analog_prediction)
 
 # -------------------------------------------------------------------------------

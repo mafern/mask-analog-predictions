@@ -49,7 +49,6 @@ def process_data(experiment_settings, overwrite_data=False):
                     # model from each of the analog and SOI lists that have the least members sets the potential members to grab
                     n_analog_min = np.min([len(glob.glob(os.path.join(os.path.dirname(__file__), "raw_data", period, mod, var, '*'))) for mod in model_list for var in experiment_settings['variable_list']])
                     member_rng = np.arange(n_analog_min)
-                    print(period, member_rng, n_analog_min)
             if split_set == 'training':
                 model_list = experiment_settings['soi_models']
                 if type(experiment_settings['data_period']) is list:
@@ -157,7 +156,7 @@ def process_data(experiment_settings, overwrite_data=False):
 
 # -------------------------------------------------------------------------------
 
-def neural_network_stack(dataset):
+def neural_network_stack(dataset, settings):
     "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
     # replace NaNs with zeros
     inputs = dataset['inputs'].fillna(0)
@@ -165,7 +164,10 @@ def neural_network_stack(dataset):
 
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
-    target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
+    if settings['method'] == 'jamin':
+        target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
+    else:
+        target = target.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
     
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target

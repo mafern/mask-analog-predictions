@@ -2,10 +2,7 @@ import xarray as xr
 import tensorflow as tf
 import metrics
 import os
-
-__author__ = "Jamin K. Rader, Elizabeth A. Barnes"
-__version__ = "30 March 2023"
-
+import numpy as np
 
 # TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
 # TODO: try jacob's suggestion of removing final layer of network
@@ -24,11 +21,13 @@ __version__ = "30 March 2023"
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-# model takes in soi and analog maps, returns mask-weighted maps and mask weights
+
 def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
                        mask_initial_value, normalize_weights_bool):
-    ""
-    
+    """
+    model part one: set up the mask which is used to weight the SOIs and analogs
+    takes in soi and analog maps, returns mask-weighted maps and mask weights
+    """
     # get the dimensions of the maps
     map_dim = x_train[0].shape[1:]
 
@@ -97,12 +96,11 @@ def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-# Second, creating the model that calculates the dissimilarity between the weighted maps
-# model takes in weighted soi and analog maps, returns the mse
-# (reminder, these are both still inputs that will be used in predicting future dissimilarity)
 def make_dissimilarity_model(x_train):
-    ""
-    
+    """
+    model part two: calculate the dissimilarity between the weighted maps
+    takes in weighted input soi and analog maps, returns the mse between them
+    """
     # get the dimensions of the maps
     map_dim = x_train[0].shape[1:]
     # input layers for the soi and analog weighted maps
@@ -129,9 +127,11 @@ def make_dissimilarity_model(x_train):
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-# Third, creating the model that uses the dissimilarity score to predict the dissimilarity of the maps x years later
 def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
-    ""
+    """
+    model part three: uses the dissimilarity score to predict the dissimilarity of the maps later
+    takes in dissimilarity, returns future mse between maps
+    """
     
     # input is mse, single-valued
     dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
@@ -165,8 +165,48 @@ def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
+def make_prediction_model_map(target_shape, prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
+    """
+    model part three: uses the dissimilarity score to predict the dissimilarity of the maps later
+    takes in dissimilarity, returns future mse between maps
+    """
+    
+    # input is mse, single-valued
+    dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
+    x = tf.keras.layers.Layer()(dissimilarity_input_layer)
+    
+    # Add all the Dense Layers
+    for nodes in prediction_model_nodes:
+        x = tf.keras.layers.Dense(
+            nodes, activation=prediction_model_act,
+            kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+4),
+            bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+1),
+            )(x)
+
+    # prediction layer -- predict regional map (flattened)
+    prediction = tf.keras.layers.Dense(
+        np.product(target_shape),
+        activation=output_activation,
+        kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed),
+        bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+2),
+        )(x)
+    # reshape to a map for loss function
+    prediction = tf.keras.layers.Reshape(target_shape)(prediction)
+
+    # define model -- in: weighted input map dissimilarity, out: future map dissimilarity
+    prediction_model = tf.keras.Model(
+        inputs=[dissimilarity_input_layer],
+        outputs=[prediction],
+        name='prediction_model'
+        )
+
+    return prediction_model
+
+# -------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+
 # Combining all three models
-def build_interp_model(settings, x_train):
+def build_interp_model(settings, target_shape, x_train):
     ""
 
     # model takes in soi and analog and returns weighted versions as well as weight mask
@@ -182,11 +222,21 @@ def build_interp_model(settings, x_train):
     dissimilarity_model = make_dissimilarity_model(x_train)
     
     # model takes in the dissimilarity above (mse) and predicts dissimilarity in the future
-    prediction_model = make_prediction_model(prediction_model_nodes=settings["prediction_nodes"],
-                                             prediction_model_act=settings["prediction_activation"],
-                                             rng_seed=settings["seed"],
-                                             output_activation="linear",
-                                             )
+    if settings['method'] == 'martin':
+        prediction_model = make_prediction_model_map(
+            target_shape,
+            prediction_model_nodes=settings["prediction_nodes"],
+            prediction_model_act=settings["prediction_activation"],
+            rng_seed=settings["seed"],
+            output_activation="linear",
+            )
+    else:
+        prediction_model = make_prediction_model(
+            prediction_model_nodes=settings["prediction_nodes"],
+            prediction_model_act=settings["prediction_activation"],
+            rng_seed=settings["seed"],
+            output_activation="linear",
+            )
     
     # take in the soi and analog inputs, return weighted versions and weight mask
     weighted_soi, weighted_analog, weights = mask_model([soi_input, analog_input])
