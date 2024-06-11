@@ -86,10 +86,10 @@ class BestAnalogs():
         self.experiment_name = experiment_name
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         
-        # get the training, validation, and testing data so they can be avoided in the soi and analogs
+        # get the training and validation data so they can be avoided in the soi and analogs
         self.used_members = np.empty(0, dtype=int)
         self.used_models = np.empty(0, dtype=str)
-        for split in ['training', 'validation', 'testing']:
+        for split in ['training', 'validation']:
             with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split+'.pickle'), "rb") as filename:
                 # just getting the models and members, so either inputs or target is sufficient
                 split_data = pickle.load(filename)

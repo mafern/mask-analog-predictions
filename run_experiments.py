@@ -118,9 +118,9 @@ class Experiments():
                 - experiment_name: name of the experiment (how it will be saved and called)
                 - variable_list: list of variable names to be included in the data
                 - analog_models: which models to use for the analog split (run self.list_variables to see available options)
-                - soi_models: which models to use for the training, validation, and testing splits (run self.list_variables to see available options)
+                - soi_models: which models to use for the training, and validation splits (run self.list_variables to see available options)
                 - leadtime: time shift between inputs and target (should be a positive integer)
-                - split: list with integer number of members to include in each split of the data (order should be: analog, training, validation, testing)
+                - split: list with integer number of members to include in each split of the data (order should be: analog, training, validation)
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
@@ -162,7 +162,7 @@ class Experiments():
         assert np.all(np.isin(data_period, ['daily', 'monthly', 'yearly'])), "data_period must be 'daily' or 'monthly' or 'yearly'"
         
         # fill a dictionary with the data split values
-        split = {"analog": split[0], "training": split[1], "validation": split[2], "testing": split[3]}
+        split = {"analog": split[0], "training": split[1], "validation": split[2]}
 
         # get locals (i.e. all of the inputs to make_exp_dictionary) before assigning anything here
         function_inputs = locals()
@@ -240,16 +240,15 @@ class Experiments():
                 except:
                     pass
         print('----------------------------------------------------------------')
-        # stack/separate into inputs and target for the analog, training, validation, and testing sets
+        # stack/separate into inputs and target for the analog, training, and validation sets
         analog_inputs, analog_target = dp.neural_network_stack(self.processed_data['analog'], experiment_settings)
         training_inputs, training_target = dp.neural_network_stack(self.processed_data['training'], experiment_settings)
         validation_inputs, validation_target = dp.neural_network_stack(self.processed_data['validation'], experiment_settings)
-        testing_inputs, testing_target = dp.neural_network_stack(self.processed_data['testing'], experiment_settings)
         # get the lat and lon ------ THIS ASSUMES THAT THE LAT AND LON ARE THE SAME BETWEEN THE ANALOG AND TRAINING SETS
         lat, lon = self.processed_data['analog']['lat'], self.processed_data['analog']['lon']
         print('----------------------------------------------------------------')
         return [analog_inputs, analog_target, training_inputs, training_target,
-                validation_inputs, validation_target, testing_inputs, testing_target, lat, lon]
+                validation_inputs, validation_target, lat, lon]
     
     # -------------------------------------------------------------------------------
     
@@ -260,14 +259,12 @@ class Experiments():
         (analog_inputs, analog_target,
          training_inputs, training_target,
          validation_inputs, validation_target,
-         testing_inputs, testing_target,
          lat, lon) = self.get_experiment_data(experiment_name, overwrite_data=overwrite_data)
         
         # reshape for multiple variables, since tensorflow flatten wants it this way
         analog_inputs = np.transpose(analog_inputs, (0, 3, 1, 2))
         training_inputs = np.transpose(training_inputs, (0, 3, 1, 2))
         validation_inputs = np.transpose(validation_inputs, (0, 3, 1, 2))
-        testing_inputs = np.transpose(testing_inputs, (0, 3, 1, 2))
         
         # ensure model names are consistent, etc.
         tf.keras.backend.clear_session()

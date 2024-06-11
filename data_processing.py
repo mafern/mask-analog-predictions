@@ -22,8 +22,8 @@ def process_data(experiment_settings, overwrite_data=False):
     # parse the experiment_settings
     experiment_name = experiment_settings['experiment_name']
 
-    # analog, training, validation, testing split
-    # this will be a dictionary with keys: 'analog', 'training', 'validation', 'testing'
+    # analog, training, validation splits
+    # this will be a dictionary with keys: 'analog', 'training', 'validation'
     split = experiment_settings['split']
     
     # random seed for selecting ensemble members
@@ -35,13 +35,13 @@ def process_data(experiment_settings, overwrite_data=False):
     
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
-    # for each of the split sets (analog, training, validation, testing)
+    # for each of the split sets (analog, training, validation)
     for split_set in split.keys():
         # file to look for if preprocessing has been completed previously
         processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle')
         if overwrite_data or not os.path.exists(processed_data_file):
             # file does not exist or overwrite has been requested
-            # list of models to use for the analog set, and for the training/validation/testing sets
+            # list of models to use for the analog set, and for the training/validation sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
                 if type(experiment_settings['data_period']) is list:
@@ -147,7 +147,7 @@ def process_data(experiment_settings, overwrite_data=False):
             # files does exist and overwrite has not been requested
 
             # load pickle files which are dictionaries with both inputs and target
-            # for each of the different split sets (analog, training, validation, testing)
+            # for each of the different split sets (analog, training, validation)
             with gzip.open(processed_data_file, "rb") as filename:
                 processed_data[split_set] = pickle.load(filename)
             print('loading pre-saved', split_set, 'dataset')
