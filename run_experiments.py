@@ -211,15 +211,14 @@ class Experiments():
         experiment_settings[experiment_name] = function_inputs
         # remove self (not needed) from dictionary
         experiment_settings[experiment_name].pop('self')
+        # set target shape based on the method
+        if method == 'jamin':
+            experiment_settings[experiment_name]['avg_target'] = True
+        else:
+            experiment_settings[experiment_name]['avg_target'] = False
         # now add the processing lists
         experiment_settings[experiment_name]["inputs_proc_steps"] = inputs_proc_steps
         experiment_settings[experiment_name]["target_proc_steps"] = target_proc_steps
-
-        # set target shape based on the method
-        if method == 'jamin':
-            experiment_settings['avg_target'] = True
-        else:
-            experiment_settings['avg_target'] = False
             
         print('experiment_settings are:')
         print(experiment_settings)    
