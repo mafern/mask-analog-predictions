@@ -277,7 +277,7 @@ class Experiments():
 
         # train the model, which will check if the model is already saved first
         # (then load if it does, train and save if it does not)
-        model, fit_summary, history = train_model.train_model(
+        model, history = train_model.train_model(
             experiment_settings,
             model,
             analog_inputs,
@@ -288,7 +288,6 @@ class Experiments():
             validation_target,
             overwrite_model=overwrite_model
         )
-        pprint(fit_summary, width=80)
         
         return model
 
@@ -422,8 +421,10 @@ class Experiments():
             images.append(imageio.imread(figure_name))
             plt.close()
             os.remove(figure_name)
+            os.remove(files[ii])
 
         imageio.mimsave(os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_gif.gif'), images, fps=12)
+        os.rmdir(os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train'))
 
     # -------------------------------------------------------------------------------
 

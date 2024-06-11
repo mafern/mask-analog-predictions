@@ -111,7 +111,6 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
                     np.savetxt(os.path.join(savepath, 'mask_epoch'+str(epoch).zfill(5)), current_mask)
 
         # train the model
-        start_time = time.time()
         history = model.fit(
             training_data,
             validation_data=(x_val, y_val),
@@ -120,20 +119,10 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
             callbacks=[earlystopping, PrintCallback()],
             verbose=1,
         )
-        stop_time = time.time()
-
-        # DISPLAY THE RESULTS
-        best_epoch = np.argmin(history.history["val_loss"])
-        fit_summary = {
-            "elapsed_time": stop_time - start_time,
-            "best_epoch": best_epoch + 1,
-            "loss_train": history.history["loss"][best_epoch],
-            "loss_valid": history.history["val_loss"][best_epoch],
-        }
         
         # save the model, then return the model along with fit_summary and history
         save_model_run(model, settings)
-        return model, fit_summary, history
+        return model, history
     
     else:
         print('loading pre-saved model')
@@ -142,13 +131,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         # load history
         with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), 'rb') as file:
             history = pickle.load(file)
-        # for loaded model, just return the losses
-        fit_summary = {
-            "best_epoch": np.argmin(history["val_loss"]) + 1,
-            "loss_train": history["loss"][np.argmin(history["val_loss"]) + 1],
-            "loss_valid": history["val_loss"][np.argmin(history["val_loss"]) + 1],
-        }
-        return model, fit_summary, history
+        return model, history
 
 # -------------------------------------------------------------------------------
 
