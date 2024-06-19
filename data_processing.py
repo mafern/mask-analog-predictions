@@ -21,17 +21,18 @@ def process_data(experiment_settings, overwrite_data=False):
     """
     # parse the experiment_settings
     experiment_name = experiment_settings['experiment_name']
-
-    # analog, training, validation splits
-    # this will be a dictionary with keys: 'analog', 'training', 'validation'
+    # analog, training, validation splits, a dictionary with keys: 'analog', 'training', 'validation'
     split = experiment_settings['split']
-    
+    # set up the model/member dictionary, which allows random selection of members without repeating
+    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*/*')))}
+    for mod in np.unique(experiment_settings['analog_models'] + experiment_settings['soi_models']):
+        print(mod, model_member_dict[mod])
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
-    rng_seed = np.random.default_rng(seed)
-    # total number of members requested
-    member_rng = np.arange(np.sum(list(split.values())))
-    period = experiment_settings['data_period']
+    # for consistency when using two different periods for SOI/analogs
+    periods = experiment_settings['data_period']
+    if np.size(periods) < 2:
+        periods = [periods, periods]
     
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
@@ -39,30 +40,20 @@ def process_data(experiment_settings, overwrite_data=False):
     for split_set in split.keys():
         # file to look for if preprocessing has been completed previously
         processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle')
+        # file does not exist or overwrite has been requested
         if overwrite_data or not os.path.exists(processed_data_file):
-            # file does not exist or overwrite has been requested
-            # list of models to use for the analog set, and for the training/validation sets
+            # list of models to use and period for the analog set, and for the training/validation sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
-                if type(experiment_settings['data_period']) is list:
-                    period = experiment_settings['data_period'][0]
-                    # model from each of the analog and SOI lists that have the least members sets the potential members to grab
-                    n_analog_min = np.min([len(glob.glob(os.path.join(os.path.dirname(__file__), "raw_data", period, mod, var, '*'))) for mod in model_list for var in experiment_settings['variable_list']])
-                    member_rng = np.arange(n_analog_min)
+                period = periods[0]
             if split_set == 'training':
                 model_list = experiment_settings['soi_models']
-                if type(experiment_settings['data_period']) is list:
-                    period = experiment_settings['data_period'][1]
-                    n_soi_min = np.min([len(glob.glob(os.path.join(os.path.dirname(__file__), "raw_data", period, mod, var, '*'))) for mod in model_list for var in experiment_settings['variable_list']])
-                    member_rng = np.arange(n_soi_min)
-
-            # randomly select ensembles members (which may not be all available data)
-            rnd_inds = rng_seed.choice(member_rng, split[split_set], replace=False, shuffle=False)
-            # remove selected indices from member_rng
-            member_rng = np.setdiff1d(member_rng, rnd_inds)
+                period = periods[1]
             
             # load the appropriate ensemble members for the requested models/variables
-            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], period, rnd_inds)
+            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], period, split[split_set], seed, model_member_dict)
+            for mod in np.unique(experiment_settings['analog_models'] + experiment_settings['soi_models']):
+                print(mod, input_raw.model_member_dict[mod])
             # deepcopy a version for the outputs
             output_raw = deepcopy(input_raw)
 
@@ -90,11 +81,14 @@ def process_data(experiment_settings, overwrite_data=False):
             for var in experiment_settings["variable_list"]:
                 # preserve the model of each member for downstream use
                 for model in model_list:
+                    # used_members = np.setdiff1d(np.arange(np.size(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', period, model, var, '*')))), model_member_dict[model])
+                    used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
+                    print(model, used_members)
                     # make a list of the model name repeating for the number of members
-                    repeat_model = [model] * rnd_inds.size
+                    repeat_model = [model] * split[split_set]
                     # add the member indices as a coordinate
-                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(rnd_inds))
-                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(member=(rnd_inds))
+                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(used_members))
+                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(member=(used_members))
                     # and add the models as a coordinate
                     input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
                     output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
@@ -143,6 +137,8 @@ def process_data(experiment_settings, overwrite_data=False):
 
             # update dictionary to return
             processed_data[split_set] = current_data
+            # update model_member_dict for next split
+            model_member_dict = input_raw.model_member_dict
         else:
             # files does exist and overwrite has not been requested
 

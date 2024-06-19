@@ -179,7 +179,8 @@ class BestAnalogs():
             if model_new_members.size == 0:
                 print("skipping "+model)
                 continue
-            input_raw = _dp.DataProcessing([model], variables, data_period, ensembles=model_new_members)
+            print(model, model_new_members, model_used_members)
+            input_raw = _dp.DataProcessing([model], variables, data_period, list(model_new_members), experiment_settings['seed'])
             for var in variables:
                 # make the resolution the same as the previously processed datasets
                 input_raw.attr_dictionary[var]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
@@ -375,6 +376,7 @@ class BestAnalogs():
         
 # -------------------------------------------------------------------------------
     
+    # TODO: speed this up (maybe sort the targets from best to worst?)
     def get_targets(self, soi_model, soi_member, variable, n_analogs, return_average=True, leadstep=1, global_mean=False, max_year=None):
         """
         get the best analogs for the given soi model/member, skipping every leadstep (number of steps

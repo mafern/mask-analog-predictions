@@ -40,7 +40,7 @@ class DataProcessing():
     outputs:
         - 
     """
-    def __init__(self, model_list, variable_list, period, ensembles=None):
+    def __init__(self, model_list, variable_list, period, n_members, seed, model_member_dict=None):
         ""
         
         # save some global variables that will be useful
@@ -62,11 +62,14 @@ class DataProcessing():
         self.period_long = period
         self.global_map = True
 
+        # save model_member_dict
+        self.model_member_dict = deepcopy(model_member_dict)
+
         # load the data from the requested models and variables
-        self.data_dictionary = self.load_data(model_list, variable_list, period, ensembles)
+        self.data_dictionary = self.load_data(model_list, variable_list, period, n_members, seed)
  
 
-    def load_data(self, model_list, variable_list, period, ensembles=None):
+    def load_data(self, model_list, variable_list, period, n_members, seed):
         """
         load files for models in model_list for the variables in variable_list
         data needs to be stored with the directory structure: data/variable_name/model_name/files
@@ -77,7 +80,8 @@ class DataProcessing():
             - variable_list: a list variable names, e.g. ['ts', 'pr',]
             - period: the sampling period of the model; 'monthly' or 'yearly' or 'daily'
             should agree with the folder structure within the data directory.
-            - ensembles: indices for ensemble members to keep.
+            - n_members: number of ensemble members to use.
+            - seed: random seed for selecting ensemble members
         outputs:
             - data_dictionary: a dictionary where the first layer is the variables, the second
             layer is the model, each of which is an xarray object containing all ensemble members.
@@ -96,6 +100,10 @@ class DataProcessing():
             }
             
             for model in model_list:
+                if type(n_members) == int:
+                    # check there are still enough members for this model when training
+                    assert np.size(self.model_member_dict[model]) >= n_members, ["more members requested than available. requested: " + str(n_members) + ", available: " + str(np.size(self.model_member_dict[model]))]
+                
                 # file path for this variable and model
                 file_path = os.path.join(os.path.dirname(__file__), 'raw_data', period, model, variable)
                 # check that path exists, if not print warning and continue
@@ -105,12 +113,18 @@ class DataProcessing():
                     continue
                 # get all files of this model and variable
                 file_list = np.sort(glob.glob(os.path.join(file_path, '*')))
-                
-                # select ensembles members from the full list if enough available
-                if ensembles is not None:
-                    assert np.size(file_list) >= np.size(ensembles), ["more members requested than available. requested: "
-                                                               + str(np.size(ensembles)) + ", available: " + str(np.size(file_list))]
-                    file_list = file_list[ensembles]
+
+                if type(n_members) is list:
+                    # members have already been chosen (e.g. best_analogs process_new_data)
+                    used_members = n_members
+                else:
+                    # generate randomly seeded choice object and randomly select members
+                    rng_seed = np.random.default_rng(seed)
+                    used_members = np.sort(rng_seed.choice(self.model_member_dict[model], n_members, replace=False, shuffle=False))
+                    # update model_member_dictionary to remove these members for later splits
+                    self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
+                # select those files
+                file_list = file_list[used_members]
 
                 for ii, file in enumerate(file_list):
                     # parse the file type
