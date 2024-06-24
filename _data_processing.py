@@ -408,7 +408,7 @@ class DataProcessing():
                 }
                 regridder = xe.Regridder(self.data_dictionary[var][model], xr.Dataset(latlon_dict), "bilinear", periodic=True)
                 # do the regridding
-                self.data_dictionary[var][model] = regridder(self.data_dictionary[var][model], keep_attrs=True)        
+                self.data_dictionary[var][model] = regridder(self.data_dictionary[var][model], keep_attrs=True, skipna=True)
         
     # -------------------------------------------------------------------------------
     
@@ -521,7 +521,7 @@ class DataProcessing():
                         # apply mask to datasets
                         self.data_dictionary[var][model] = self.data_dictionary[var][model] * region_mask
                         # drop coordinates, etc. outside of region
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].where(abs(self.data_dictionary[var][model]) >= 0, drop=True)
+                        self.data_dictionary[var][model] = self.data_dictionary[var][model].where(~np.isnan(region_mask), drop=True)
 
         # if input is a list, use these as boundaries to define region
         else:
@@ -679,7 +679,6 @@ class DataProcessing():
     
     # -------------------------------------------------------------------------------
     
-    # TODO: explore dividing by the STD over the baseline period to normalize further
     def baseline_norm(self, baseline, var_list=None):
         """
         normalize the datasets by a baseline period averaged over time and members.
