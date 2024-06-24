@@ -179,7 +179,6 @@ class BestAnalogs():
             if model_new_members.size == 0:
                 print("skipping "+model)
                 continue
-            print(model, model_new_members, model_used_members)
             input_raw = _dp.DataProcessing([model], variables, data_period, list(model_new_members), experiment_settings['seed'])
             for var in variables:
                 # make the resolution the same as the previously processed datasets
@@ -432,18 +431,15 @@ class BestAnalogs():
                 soi_prediction.append(step_analogs)
             prediction_min.append(np.nanmin(step_analogs, axis=0))
             prediction_max.append(np.nanmax(step_analogs, axis=0))
-            # print(soi_time_index, ii)
 
         # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
         soi_ind = np.where((self.prediction_dict['target'].model == soi_model) &
                            (self.prediction_dict['target'].member == soi_member))[0]
-        # get the soi (aka the truth)
-        # truth = self.prediction_dict['target'].isel(member=soi_ind, time=np.arange(ntimes))[variable]
+        # get the soi (aka the truth))
         truth = self.prediction_dict['target'].isel(member=soi_ind)[variable]
         if global_mean:
             truth = truth.weighted(weights).mean(("lon", "lat"), skipna=True)
 
-        # return(truth.data.squeeze(), np.squeeze(soi_prediction)[:ntimes], np.squeeze(prediction_min)[:ntimes], np.squeeze(prediction_max)[:ntimes])
         return(truth.data.squeeze(), np.squeeze(soi_prediction), np.squeeze(prediction_min), np.squeeze(prediction_max))
 
 # -------------------------------------------------------------------------------
@@ -456,7 +452,7 @@ class BestAnalogs():
             savename = self.experiment_name+'_suite.pdf'
         # get the targets for the requested soi and variable
         truth, prediction, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
-        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+        times = np.where(~np.isnan(truth))[0]
 
         # get the full range of analog predictions and the model mean
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
@@ -466,27 +462,27 @@ class BestAnalogs():
         fig, ax = plt.subplots(4, 1, figsize=(14,5*4))
         # --------------- plot the analog prediction and truth --------------- #
         # plot the true values (i.e. the soi target)
-        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax[0].plot(self.prediction_dict['target']['time.year'][times], truth[times], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # plot the prediction
-        ax[0].plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], '-', label='analog prediction ('+str(n_analogs)+')',
+        ax[0].plot(self.prediction_dict['target']['time.year'][times]+leadtime, prediction[times], '-', label='analog prediction ('+str(n_analogs)+')',
                  lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # --------------- plot the ranges and truth (refining spread) --------------- #
         # plot the range of library
-        ax[1].fill_between(self.prediction_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
+        ax[1].fill_between(self.prediction_dict['target']['time.year'][times], all_min[times], all_max[times], color=c_skyline_ll,
                          alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the range of all the analogs
-        ax[1].fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_sunshine,
+        ax[1].fill_between(self.prediction_dict['target']['time.year'][times]+leadtime, prediction_min[times], prediction_max[times], color=c_sunshine,
                          alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
-        ax[1].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax[1].plot(self.prediction_dict['target']['time.year'][times], truth[times], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # --------------- plot the model mean and truth --------------- #
         # plot the true values (i.e. the soi target)
-        ax[2].plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax[2].plot(self.prediction_dict['target']['time.year'][times], truth[times], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # plot the model mean of library
-        ax[2].plot(self.prediction_dict['target']['time.year'][:ntimes], all_model_mean[:ntimes], label='model mean',
+        ax[2].plot(self.prediction_dict['target']['time.year'][times], all_model_mean[times], label='model mean',
                 color=c_skyline_l, lw=3, path_effects=[patheffects.withStroke(linewidth=4.66, foreground="k")])
 
         # set up the legend and axes for each subplot
@@ -526,7 +522,7 @@ class BestAnalogs():
             savename = self.experiment_name+'_range.pdf'
         # get the targets for the requested soi and variable
         truth, _, prediction_min, prediction_max = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
-        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+        times = np.where(~np.isnan(truth))[0]
 
         # get the full range of analog predictions
         all_min, all_max = self.get_full_analog_range(soi_model, soi_member, variable, global_mean=True)
@@ -534,13 +530,13 @@ class BestAnalogs():
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of library
-        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes], all_min[:ntimes], all_max[:ntimes], color=c_skyline_ll,
+        ax.fill_between(self.prediction_dict['target']['time.year'][times], all_min[times], all_max[times], color=c_skyline_ll,
                          alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the range of all the analogs
-        ax.fill_between(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction_min[:ntimes], prediction_max[:ntimes], color=c_sunshine,
+        ax.fill_between(self.prediction_dict['target']['time.year'][times]+leadtime, prediction_min[times], prediction_max[times], color=c_sunshine,
                          alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
-        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax.plot(self.prediction_dict['target']['time.year'][times], truth[times], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
 
         # legend, labels, etc.
@@ -573,15 +569,15 @@ class BestAnalogs():
             savename = self.experiment_name+'_prediction.pdf'
         # get the targets for the requested soi and variable
         truth, prediction, _, _ = self.get_targets(soi_model, soi_member, variable, n_analogs, leadstep, global_mean=True)
-        ntimes = np.shape(np.where(~np.isnan(truth))[0])[0]
+        times = np.where(~np.isnan(truth))[0]
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the true values (i.e. the soi target)
-        ax.plot(self.prediction_dict['target']['time.year'][:ntimes], truth[:ntimes], lw=0.75, c='white', label='truth',
+        ax.plot(self.prediction_dict['target']['time.year'][times], truth[times], lw=0.75, c='white', label='truth',
                  path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # plot the prediction
-        ax.plot(self.prediction_dict['target']['time.year'][:ntimes]+leadtime, prediction[:ntimes], '-', label='analog prediction ('+str(n_analogs)+')',
+        ax.plot(self.prediction_dict['target']['time.year'][times]+leadtime, prediction[times], '-', label='analog prediction ('+str(n_analogs)+')',
                  lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
 
         # legend, labels, etc.
