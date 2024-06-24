@@ -25,8 +25,6 @@ def process_data(experiment_settings, overwrite_data=False):
     split = experiment_settings['split']
     # set up the model/member dictionary, which allows random selection of members without repeating
     model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*/*')))}
-    for mod in np.unique(experiment_settings['analog_models'] + experiment_settings['soi_models']):
-        print(mod, model_member_dict[mod])
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
     # for consistency when using two different periods for SOI/analogs
@@ -52,8 +50,6 @@ def process_data(experiment_settings, overwrite_data=False):
             
             # load the appropriate ensemble members for the requested models/variables
             input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], period, split[split_set], seed, model_member_dict)
-            for mod in np.unique(experiment_settings['analog_models'] + experiment_settings['soi_models']):
-                print(mod, input_raw.model_member_dict[mod])
             # deepcopy a version for the outputs
             output_raw = deepcopy(input_raw)
 
@@ -81,9 +77,7 @@ def process_data(experiment_settings, overwrite_data=False):
             for var in experiment_settings["variable_list"]:
                 # preserve the model of each member for downstream use
                 for model in model_list:
-                    # used_members = np.setdiff1d(np.arange(np.size(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', period, model, var, '*')))), model_member_dict[model])
                     used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
-                    print(model, used_members)
                     # make a list of the model name repeating for the number of members
                     repeat_model = [model] * split[split_set]
                     # add the member indices as a coordinate
