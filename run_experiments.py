@@ -175,6 +175,7 @@ class Experiments():
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(experiment_settings['roll_period'])": roll_period,
+                               "window_time(experiment_settings['window'])": window,
                                "shift_inout_time(-experiment_settings['leadtime'], experiment_settings['window'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
@@ -508,7 +509,7 @@ class Experiments():
         resolution_dictionary = {
             "daily": {},
             "monthly": {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0]},
-            "yearly": {'BEST-YEARLY': [1.0, 1.0], 'ERA5-YEARLY': [0.25, 0.25], 'GISTEMP': [2.5, 2.5], 'GPCC': [1, 1], 'UDEL': [0.5, 0.5]}}
+            "yearly": {'BEST-YEARLY': [1.0, 1.0], 'ERA5-YEARLY': [0.25, 0.25], 'GISTEMP': [2.5, 2.5], 'UDEL': [0.5, 0.5]}}
 
         for cadence in ['daily', 'monthly', 'yearly']:
             models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence+'/*'))
