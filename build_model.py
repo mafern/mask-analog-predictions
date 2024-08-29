@@ -4,10 +4,6 @@ import metrics
 import os
 import numpy as np
 
-# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-# TODO: try jacob's suggestion of removing final layer of network
-
-
 # def parse_model(x_input, mask_model, dissimilarity_model, prediction_model):
     
 #     weighted_soi, weighted_analog, weights = mask_model(x_input)

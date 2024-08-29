@@ -1,5 +1,5 @@
 """
-DATA PROCESSING CLASS
+DATA PROCESSING CLASS: only works with netcdf (.nc) files currently
 """
 import numpy as np
 import glob
@@ -8,28 +8,8 @@ from copy import deepcopy
 import xarray as xr
 xr.set_options(keep_attrs=True)
 import xesmf as xe
-# import cfgrib
-# import warnings
-# warnings.filterwarnings("ignore")
 import regionmask
 import json
-
-# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-
-def route_by_filetype(file_type, file):
-    # TODO: add support for other file types
-    # call appropriate loading function: xarray for .nc, .hdf, .grib
-    # only support for netcdf files for now
-    if file_type == ".nc":
-        dataset = load_nc(file)
-    # elif file_type == ".hdf5":
-        # load
-        # convert to xarray format
-    return dataset.squeeze()
-
-def load_nc(file):
-    return xr.load_dataset(file)
-
 
 class DataProcessing():
     """
@@ -127,10 +107,9 @@ class DataProcessing():
                 file_list = file_list[used_members]
 
                 for ii, file in enumerate(file_list):
-                    # parse the file type
-                    file_type = os.path.splitext(file)[1]
-                    # load based on file type -- will be returned in xarray format
-                    ens_member = route_by_filetype(file_type, file)
+                    # load file -- will be returned in xarray format
+                    ens_member = xr.load_dataset(file).squeeze()
+
                     # create ensemble_list or add to ensemble_list
                     if ii == 0:
                         # add member dimension
@@ -310,7 +289,7 @@ class DataProcessing():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
                 # rolling average over roll_period for the current time period of the data
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=window, center=True).mean().dropna("time", how="all")
+                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=window, center=False).mean().dropna("time", how="all")
 
         print('target windowed applied, now', self.data_dictionary[var][model].time.size, 'time steps')
     
@@ -440,7 +419,6 @@ class DataProcessing():
                     if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
                         # adjust the resolution of the mask to be the same as the model and variable
                         regridder = xe.Regridder(model_mask, self.data_dictionary[var][model], "bilinear", periodic=True)
-                        # other methods: 'bilinear' 'nearest_s2d' 'nearest_d2s'
                         model_mask = regridder(model_mask, keep_attrs=True)
                     final_mask = model_mask.mask
                     print('masking', model, 'model using model specific mask')
