@@ -11,12 +11,9 @@ from silence_tensorflow import silence_tensorflow
 silence_tensorflow()
 logging.disable(logging.WARNING)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-# 0 = all messages are logged (default behavior) , 1 = INFO messages are not printed , 2 = INFO and WARNING messages
-# are not printed , 3 = INFO, WARNING, and ERROR messages are not printed
 tf.get_logger().setLevel('ERROR')
 
-# TODO: incorporate trends (tendencies) in the inputs for both short (1 year) and long (5 or 10 years), essentially want d/dt
-# TODO: try sample weighting on the target distance (inverse)
+# TODO: find a way to anchor the learned mask over a trajectory (time), possibly just multiple lead times? tethering?
 
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
     ""
@@ -28,9 +25,9 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         i_soi = rng.choice(np.arange(0, soi_input.shape[0]), batch_size, replace=True)
         i_analog = rng.choice(np.arange(0, analog_input.shape[0]), batch_size, replace=True)
         if settings['method'] == 'jacob':
-            targets = np.mean(metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog]), axis=(1, 2))
+            targets = np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=(1, 2))
         else:
-            targets = metrics.get_targets(settings, soi_output[i_soi], analog_output[i_analog])
+            targets = metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog])
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
 # -------------------------------------------------------------------------------
