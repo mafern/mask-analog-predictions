@@ -11,7 +11,7 @@ import gzip
 import copy
 
 # TODO: explore multiple masks -- different leadtimes to get a coherent time series (starting from a single soi time rather than rolling that forward and projecting 1 year over and over) -- tethering
-# TODO: if analogs already exist for an SOI and you are adding to the library, delete the current indices (SOI that already has analogs) since it will no longer match up
+#### REWRITE THIS SO THAT INDICES ARE SAVED SEPARATELY -- TAKES A LOT OF TIME TO RESAVE THE INPUTS AND TARGETS WHICH DON'T CHANGE (library file and analog file)
 
 # -------------------------------------------------------------------------------
 # general use functions
@@ -80,8 +80,12 @@ def get_targets(experiment_name, soi_model, soi_member, variable, n_analogs, pre
     # get the prediction for the SOI
     soi_prediction = prediction_dict['target'].isel(member=best_analog_members, time=best_analog_times+leadtime)
     # add prediction time
-    soi_prediction['time'] = soi_prediction['soi_time.year'] + leadtime
-    soi_prediction = soi_prediction[variable]
+    new_time_range = pd.date_range(start=str(soi_prediction['soi_time.year'].min().data + leadtime)[:4] + str(soi_prediction['soi_time'].min().data)[4:], 
+                                   end=str(soi_prediction['soi_time.year'].max().data + leadtime)[:4] + str(soi_prediction['soi_time'].max().data)[4:], freq='1Y')
+    soi_prediction['time'] = new_time_range
+    soi_prediction = soi_prediction[variable].convert_calendar("noleap", dim='time')
+    # add selected analog time
+    soi_prediction['analog_time'] = soi_indices.best_input_times.isel(analog_size=np.arange(n_analogs))
     # now convert to global mean if requested (predictions)
     if global_mean:
         soi_prediction = soi_prediction.weighted(weights).mean(("lon", "lat"), skipna=True)
@@ -122,9 +126,9 @@ def get_full_analog_range(prediction_dict, soi_model, soi_member, variable, glob
         weights = np.cos(np.deg2rad(prediction_dict['target'].lat))
         non_soi_analogs = non_soi_analogs.weighted(weights).mean(("lon", "lat"), skipna=True)
     if minmax:
-        return(non_soi_analogs[variable].min(dim='member').data, non_soi_analogs[variable].max(dim='member').data)
+        return(non_soi_analogs[variable].min(dim='member'), non_soi_analogs[variable].max(dim='member'))
     else:
-        return(non_soi_analogs[variable].mean(dim='member').data)
+        return(non_soi_analogs[variable].mean(dim='member'))
 
 # -------------------------------------------------------------------------------
 
@@ -145,11 +149,7 @@ class BestAnalogs():
     """
     Class for processing analog library, selecting best analogs for a given SOI.
     """
-    def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None, fig_path=None):
-        if fig_path is None:
-            fig_path = 'figures/'
-        self.fig_path = fig_path
-
+    def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None):
         # save the experiment_name, load the corresponding mask
         self.experiment_name = experiment_name
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
@@ -323,10 +323,7 @@ class BestAnalogs():
         weighted_soi, weighted_analogs = data_iterable
 
         # get the mse between the single soi and the library of analogs (both weighted)
-        mse = ((weighted_analogs - weighted_soi)**2).mean(dim=('lat', 'lon')).to_array().to_numpy().squeeze()
-        # lat weighting
-        # lat_weights = np.cos(np.deg2rad(weighted_analogs.lat))
-        # mse = ((weighted_soi - weighted_analogs)**2).weighted(lat_weights).mean(("lon", "lat"), skipna=True).to_array().to_numpy().squeeze()
+        mse = ((weighted_analogs - weighted_soi)**2).mean(dim=('lat', 'lon'), skipna=True).to_array().to_numpy().squeeze()
         
         if mse.ndim == 3:
             # if there are multiple variables, take mean over mse for all variables
@@ -338,9 +335,9 @@ class BestAnalogs():
         # and analog time sorted indices, analog member & model sorted indices as data_variables
         soi_ds = xr.Dataset(
             data_vars=dict(
-                best_input_times=(["soi_index", "time", "analog_size"], weighted_analogs.time[best_times].data.reshape(1, 1, -1)),
                 best_analog_times=(["soi_index", "time", "analog_size"], best_times.reshape(1, 1, -1)),
                 best_analog_members=(["soi_index", "time", "analog_size"], best_members.reshape(1, 1, -1)),
+                best_input_times=(["soi_index", "time", "analog_size"], weighted_analogs.time[best_times].data.reshape(1, 1, -1)),
                 best_input_members=(["soi_index", "time", "analog_size"], weighted_analogs.member[best_members].data.reshape(1, 1, -1).astype(int)),
                 best_input_models=(["soi_index", "time", "analog_size"], weighted_analogs.model[best_members].data.reshape(1, 1, -1))
             ),
@@ -362,7 +359,6 @@ class BestAnalogs():
         """
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(self.experiment_name)
-        max_year = self.prediction_dict['indices']['soi_time.year'][-1]
         leadtime = experiment_settings['leadtime']
         # use a threshold for the mask to remove low relevance regions
         mask_object = self.mask_object
@@ -409,6 +405,7 @@ class BestAnalogs():
 
         # these steps ensure that inputs with corresponding targets are not picked (nan, so they move to the end of the best matches)
         # nan the last leadtime years of the inputs (no corresponding target)
+        max_year = soi_inputs['time.year'][-1].data
         weighted_analogs = weighted_analogs.where(weighted_analogs['time.year'] < max_year - leadtime)
         # grab the first variable name (assumes all variables have the same nans)
         var = list(self.prediction_dict['inputs'].keys())[0]
