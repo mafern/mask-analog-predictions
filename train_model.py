@@ -97,15 +97,18 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         gen.close()
 
         class PrintCallback(tf.keras.callbacks.Callback):
+            def on_train_begin(self, logs=None):
+                self.mask_training = []
+                self.savepath = os.path.join(os.path.dirname(__file__), 'figures', experiment_name)
+                if not os.path.exists(self.savepath):
+                    os.makedirs(self.savepath)
             def on_epoch_begin(self, epoch, logs=None):
-                savepath = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train')
-                if not os.path.exists(savepath):
-                    os.makedirs(savepath)
                 current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
-                print('')
-                print(current_mask)
-                if epoch % 2 == 0:
-                    np.savetxt(os.path.join(savepath, 'mask_epoch'+str(epoch).zfill(5)), current_mask)
+                self.mask_training.append(current_mask)
+            def on_train_end(self, logs=None):
+                final_epoch = earlystopping.stopped_epoch - settings['patience'] + 1
+                self.mask_training = self.mask_training[:final_epoch]
+                np.savetxt(os.path.join(self.savepath, 'mask_training'), self.mask_training)
 
         # train the model
         history = model.fit(
