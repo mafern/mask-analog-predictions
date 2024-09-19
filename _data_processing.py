@@ -224,11 +224,17 @@ class DataProcessing():
             for var in self.data_dictionary.keys():
                 # for each model (get down to the xarray level from the dictionary)
                 for model in self.data_dictionary[var].keys():
+                    # resample first, for data consistency
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=self.period[-1]).mean()
+                    # then down-sample
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=period).mean()
         elif sampling == "up-sampling":
             print(sampling, "dataset from", self.period, "to", period)
             for var in self.data_dictionary.keys():
                 for model in self.data_dictionary[var].keys():
+                    # resample first, for data consistency
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=self.period[-1]).mean()
+                    # then up-sample
                     self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=period).interpolate(kind='linear')
                     # OTHER INTERPOLATION OPTIONS: "nearest", "zero", "slinear", "quadratic", "cubic", "polynomial"
         else: # just resampling on the same period
