@@ -364,7 +364,7 @@ class Experiments():
 
     def plot_mask(self, experiment_name, vmin=None, vmax=None, savename=None, cmap=blue_cmap, colorbar=True):
         if savename is None:
-            savename = experiment_name+'_mask'
+            savename = experiment_name+'/'+experiment_name+'_mask'
 
         mask = self.make_mask(experiment_name)
         for var in np.array(mask.data_vars):
@@ -396,10 +396,8 @@ class Experiments():
         # get mask
         mask = self.make_mask(experiment_name)
         # get the files for this experiment
-        mask_training_epochs_path = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train', '*')
-        files = np.sort(glob.glob(mask_training_epochs_path))
-        frames = np.vstack([np.loadtxt(file).reshape(1, mask.lat.size, mask.lon.size) for file in files])
-
+        mask_training_epochs_path = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'/mask_training')
+        frames = np.loadtxt(mask_training_epochs_path).reshape(-1, mask.lat.size, mask.lon.size)
         images = []
         for ii, frame in enumerate(frames):
             fig = plt.figure(figsize=(9, 9))
@@ -417,15 +415,13 @@ class Experiments():
             ax.add_feature(land_feature)
 
             ax.pcolormesh(mask.lon, mask.lat, frame, transform=data_crs, cmap=cmap, vmin=frames.min(), vmax=frames.max())
-            figure_name = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train', 'mask_figure'+str(ii).zfill(5)+'.png')
+            figure_name = os.path.join(os.path.dirname(__file__), 'figures', experiment_name, 'mask_figure'+str(ii).zfill(5)+'.png')
             plt.savefig(figure_name, dpi=400, bbox_inches='tight', pad_inches=0.1)
             images.append(imageio.imread(figure_name))
             plt.close()
             os.remove(figure_name)
-            os.remove(files[ii])
 
-        imageio.mimsave(os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_gif.gif'), images, fps=12)
-        os.rmdir(os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'_train'))
+        imageio.mimsave(os.path.join(os.path.dirname(__file__), 'figures', experiment_name, experiment_name+'_mask_gif.gif'), images, fps=12)
 
     # -------------------------------------------------------------------------------
 
