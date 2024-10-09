@@ -7,6 +7,7 @@ import cartopy.feature as cfeature
 import run_experiments as rexp
 import metrics
 import copy
+import bottleneck as bn
 
 # TODO: add some extremes plots
 
@@ -49,7 +50,7 @@ class PlotMetrics():
     """
     Class for plotting analog metrics for a given SOI.
     """
-    def __init__(self, experiment_name, soi_model, soi_member, variable, soi_index=None, fig_path=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, fig_path=None):
         if fig_path is None:
             fig_path = 'figures/'+experiment_name+'/'
         self.fig_path = fig_path
@@ -59,31 +60,31 @@ class PlotMetrics():
         self.soi_model = soi_model
         self.soi_member = soi_member
         self.variable = variable
-        self.soi_index = soi_index
+        self.tether = tether
         # get the settings so the region name can be used in the figure
         self.settings = rexp.Experiments().get_experiment(self.experiment_name)
         self.leadtime = self.settings['leadtime']
-        self.metrics = metrics.AnalogMetrics(self.experiment_name, self.soi_model, self.soi_member, self.variable, self.soi_index)
+        self.metrics = metrics.AnalogMetrics(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable)
         self.predictions = ["analog", "model", "perfect"]
 
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_mse(self, n_analogs, savename=None, time_range=None):
+    def nana_mse(self, savename=None, time_range=None):
         """plot the spread over ensemble versus number of analogs and compare to model mean"""
         mses = []
         nana = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             mse = self.metrics.prediction_mse(ii, prediction="analog", map=False, time_range=time_range)
-            mses.append(np.nanmean(mse))
-        mse_allmem = np.nanmean(self.metrics.prediction_mse(ii, prediction="model", map=False, time_range=time_range))
-        mse_perfect = np.nanmean(self.metrics.prediction_mse(ii, prediction="perfect", map=False, time_range=time_range))
+            mses.append(bn.nanmean(mse))
+        mse_allmem = bn.nanmean(self.metrics.prediction_mse(ii, prediction="model", map=False, time_range=time_range))
+        mse_perfect = bn.nanmean(self.metrics.prediction_mse(ii, prediction="perfect", map=False, time_range=time_range))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction mse
-        ax.semilogx(nana, mses, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, mses, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(mse_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -98,7 +99,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel('mean squared error', fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -136,17 +136,17 @@ class PlotMetrics():
         ax.semilogy(time, mse_analog, '-', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # the mean across time
-        ax.axhline(np.nanmean(mse_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
+        ax.axhline(bn.nanmean(mse_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # plot the same for the all model mean
         ax.semilogy(time, mse_model, '-', label='model', lw=2.66, c=c_skyline_l,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(mse_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
+        ax.axhline(bn.nanmean(mse_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # and for the perfect analogs
         ax.semilogy(time, mse_perfect, '-', label='perfect analogs', lw=2.66, c=c_flowertrial,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(mse_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
+        ax.axhline(bn.nanmean(mse_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
 
         # legend, labels, etc.
@@ -224,19 +224,19 @@ class PlotMetrics():
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_soe(self, n_analogs, savename=None, time_range=None):
+    def nana_soe(self, savename=None, time_range=None):
         """plot the spread over ensemble versus number of analogs and compare to model mean"""
         soes = []
         nana = [2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             soe = self.metrics.spread_ensemble(ii, prediction="analog", map=False, time_range=time_range)
-            soes.append(np.nanmean(soe))
-        soe_allmem = np.nanmean(self.metrics.spread_ensemble(ii, prediction="model", map=False, time_range=time_range))
+            soes.append(bn.nanmean(soe))
+        soe_allmem = bn.nanmean(self.metrics.spread_ensemble(ii, prediction="model", map=False, time_range=time_range))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction spread over ensemble error
-        ax.semilogx(nana, soes, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, soes, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(soe_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -248,7 +248,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel('spread over ensemble error', fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -285,12 +284,12 @@ class PlotMetrics():
         ax.plot(time, soe_analog, '-', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # the mean across time
-        ax.axhline(np.nanmean(soe_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
+        ax.axhline(bn.nanmean(soe_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # plot the same for the all model mean
         ax.plot(time, soe_model, '-', label='model', lw=2.66, c=c_skyline_l,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(soe_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
+        ax.axhline(bn.nanmean(soe_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
 
         # legend, labels, etc.
@@ -369,20 +368,20 @@ class PlotMetrics():
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_emd(self, n_analogs, penalty=1, savename=None, time_range=None):
+    def nana_emd(self, penalty=1, savename=None, time_range=None):
         """plot the earth mover's distance versus number of analogs and compare to model mean and perfect analogs"""
         emds = []
         nana = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             emd = self.metrics.earth_movers_distance(ii, prediction="analog", time_range=time_range, extra_mass_penalty=penalty)
-            emds.append(np.nanmean(emd))
-        emd_allmem = np.nanmean(self.metrics.earth_movers_distance(ii, prediction="model", time_range=time_range, extra_mass_penalty=penalty))
-        emd_perfect = np.nanmean(self.metrics.earth_movers_distance(ii, prediction="perfect", time_range=time_range, extra_mass_penalty=penalty))
+            emds.append(bn.nanmean(emd))
+        emd_allmem = bn.nanmean(self.metrics.earth_movers_distance(ii, prediction="model", time_range=time_range, extra_mass_penalty=penalty))
+        emd_perfect = bn.nanmean(self.metrics.earth_movers_distance(ii, prediction="perfect", time_range=time_range, extra_mass_penalty=penalty))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction earth mover's distance
-        ax.semilogx(nana, emds, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, emds, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(emd_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -397,7 +396,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel("earth mover's distance", fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -435,17 +433,17 @@ class PlotMetrics():
         ax.semilogy(time, emd_analog, '-', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # the mean across time
-        ax.axhline(np.nanmean(emd_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
+        ax.axhline(bn.nanmean(emd_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # plot the same for the all model mean
         ax.semilogy(time, emd_model, '-', label='model', lw=2.66, c=c_skyline_l,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(emd_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
+        ax.axhline(bn.nanmean(emd_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # and for the perfect analogs
         ax.semilogy(time, emd_perfect, '-', label='perfect analogs', lw=2.66, c=c_flowertrial,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(emd_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
+        ax.axhline(bn.nanmean(emd_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
 
         # legend, labels, etc.
@@ -474,20 +472,20 @@ class PlotMetrics():
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_var(self, n_analogs, savename=None, time_range=None):
+    def nana_var(self, savename=None, time_range=None):
         """plot the variance difference versus number of analogs and compare to model mean and perfect analogs"""
         vars = []
         nana = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             var = self.metrics.variance_difference(ii, prediction="analog", time_range=time_range)
-            vars.append(np.nanmean(var))
-        var_allmem = np.nanmean(self.metrics.variance_difference(ii, prediction="model", time_range=time_range))
-        var_perfect = np.nanmean(self.metrics.variance_difference(ii, prediction="perfect", time_range=time_range))
+            vars.append(bn.nanmean(var))
+        var_allmem = bn.nanmean(self.metrics.variance_difference(ii, prediction="model", time_range=time_range))
+        var_perfect = bn.nanmean(self.metrics.variance_difference(ii, prediction="perfect", time_range=time_range))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction class accuracy
-        ax.semilogx(nana, vars, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, vars, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(var_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -502,7 +500,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel(u'fractional difference\n in variance', fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -571,20 +568,20 @@ class PlotMetrics():
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_crps(self, n_analogs, savename=None, time_range=None):
+    def nana_crps(self, savename=None, time_range=None):
         """plot the spread over ensemble versus number of analogs and compare to model mean and perfect analogs"""
         crpss = []
         nana = [2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             crps = self.metrics.crps(ii, prediction="analog", map=False, time_range=time_range)
-            crpss.append(np.nanmean(crps))
-        crps_allmem = np.nanmean(self.metrics.crps(ii, prediction="model", map=False, time_range=time_range))
-        crps_perfect = np.nanmean(self.metrics.crps(ii, prediction="perfect", map=False, time_range=time_range))
+            crpss.append(bn.nanmean(crps))
+        crps_allmem = bn.nanmean(self.metrics.crps(ii, prediction="model", map=False, time_range=time_range))
+        crps_perfect = bn.nanmean(self.metrics.crps(ii, prediction="perfect", map=False, time_range=time_range))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction class accuracy
-        ax.semilogx(nana, crpss, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, crpss, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(crps_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -599,7 +596,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel('crps', fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -638,17 +634,17 @@ class PlotMetrics():
         ax.plot(time, crps_analog, '-', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # the mean across time
-        ax.axhline(np.nanmean(crps_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
+        ax.axhline(bn.nanmean(crps_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # plot the same for the all model mean
         ax.plot(time, crps_model, '-', label='model', lw=2.66, c=c_skyline_l,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(crps_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
+        ax.axhline(bn.nanmean(crps_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # and for the perfect analogs
         ax.plot(time, crps_perfect, '-', label='perfect analogs', lw=2.66, c=c_flowertrial,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(crps_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
+        ax.axhline(bn.nanmean(crps_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
 
         # legend, labels, etc.
@@ -726,20 +722,20 @@ class PlotMetrics():
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-    def nana_class(self, n_analogs, n_cells, coarsen_time=1, savename=None, time_range=None):
+    def nana_class(self, n_cells, coarsen_time=1, savename=None, time_range=None):
         """plot the class accuracy versus number of analogs and compare to model mean and perfect analogs"""
         classes = []
         nana = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 1000, 2000, 5000]
         for ii in nana:
             class_acc = self.metrics.class_accuracy(ii, n_cells, prediction="analog", map=False, coarsen_time=coarsen_time, time_range=time_range)
-            classes.append(np.nanmean(class_acc))
-        class_allmem = np.nanmean(self.metrics.class_accuracy(ii, n_cells, prediction="model", map=False, coarsen_time=coarsen_time, time_range=time_range))
-        class_perfect = np.nanmean(self.metrics.class_accuracy(ii, n_cells, prediction="perfect", map=False, coarsen_time=coarsen_time, time_range=time_range))
+            classes.append(bn.nanmean(class_acc))
+        class_allmem = bn.nanmean(self.metrics.class_accuracy(ii, n_cells, prediction="model", map=False, coarsen_time=coarsen_time, time_range=time_range))
+        class_perfect = bn.nanmean(self.metrics.class_accuracy(ii, n_cells, prediction="perfect", map=False, coarsen_time=coarsen_time, time_range=time_range))
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(12,5))
         # plot the analog prediction class accuracy
-        ax.semilogx(nana, classes, '-o', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
+        ax.semilogx(nana, classes, '-o', label='analog', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # plot the same for the all model mean
         ax.axhline(class_allmem, label='model mean', ls='--', lw=1.66, c=c_skyline_l,
@@ -754,7 +750,6 @@ class PlotMetrics():
         leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=3, frameon=False, prop={'weight':'bold', 'size':'15'})
         ax.set_xlabel('number of analogs', fontsize=18)
         ax.set_ylabel('class accuracy ('+str(n_cells)+' classes)', fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.yaxis.set_ticks_position('left')
@@ -793,17 +788,17 @@ class PlotMetrics():
         ax.plot(time, class_analog, '-', label='analog ('+str(n_analogs)+')', lw=2.66, c=c_sunshine,
                     path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # the mean across time
-        ax.axhline(np.nanmean(class_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
+        ax.axhline(bn.nanmean(class_analog), ls='--', color=c_sunshine, lw=1.66, zorder=0, label='analog mean',
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # plot the same for the all model mean
         ax.plot(time, class_model, '-', label='model', lw=2.66, c=c_skyline_l,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(class_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
+        ax.axhline(bn.nanmean(class_model), ls='--', label='model mean', lw=1.66, c=c_skyline_l, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
         # and for the perfect analogs
         ax.plot(time, class_perfect, '-', label='perfect analogs', lw=2.66, c=c_flowertrial,
                 path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
-        ax.axhline(np.nanmean(class_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
+        ax.axhline(bn.nanmean(class_perfect), ls='--', label='perfect mean', lw=1.66, c=c_flowertrial, zorder=0,
                 path_effects=[patheffects.withStroke(linewidth=2.66, foreground="k")])
 
         # legend, labels, etc.
