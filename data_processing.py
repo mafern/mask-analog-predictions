@@ -7,6 +7,10 @@ import _data_processing as _dp
 import pickle
 from copy import deepcopy
 
+FLOAT_TYPE = np.float32
+INT_TYPE = np.int32
+PERIOD = 'monthly'
+
 
 def process_data(experiment_settings, overwrite_data=False):
     """
@@ -27,10 +31,6 @@ def process_data(experiment_settings, overwrite_data=False):
     model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*/*')))}
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
-    # for consistency when using two different periods for SOI/analogs
-    periods = experiment_settings['data_period']
-    if np.size(periods) < 2:
-        periods = [periods, periods]
     
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
@@ -40,16 +40,16 @@ def process_data(experiment_settings, overwrite_data=False):
         processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle')
         # file does not exist or overwrite has been requested
         if overwrite_data or not os.path.exists(processed_data_file):
-            # list of models to use and period for the analog set, and for the training/validation sets
+            # list of models to use for the analog set, training, and validation sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
-                period = periods[0]
-            if split_set == 'training':
+            elif split_set == 'training':
                 model_list = experiment_settings['soi_models']
-                period = periods[1]
+            else:
+                model_list = experiment_settings['val_models']
             
             # load the appropriate ensemble members for the requested models/variables
-            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], period, split[split_set], seed, model_member_dict)
+            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], PERIOD, split[split_set], seed, model_member_dict)
             # deepcopy a version for the outputs
             output_raw = deepcopy(input_raw)
 
@@ -102,29 +102,36 @@ def process_data(experiment_settings, overwrite_data=False):
                     current_data["inputs"] = xr.merge([current_data["inputs"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["inputs"].keys()], join='inner')
                     current_data["target"] = xr.merge([current_data["target"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["target"].keys()], join='inner')
                     # get latitude and longitude for each variable
-                    current_data['lat'] = {var: current_data['inputs']['lat_'+var].to_numpy() for var in current_data["inputs"].keys()}
-                    current_data['lon'] = {var: current_data['inputs']['lon_'+var].to_numpy() for var in current_data["inputs"].keys()}
+                    current_data['lat'] = {var: current_data['inputs']['lat_'+var].to_numpy().astype(FLOAT_TYPE) for var in current_data["inputs"].keys()}
+                    current_data['lon'] = {var: current_data['inputs']['lon_'+var].to_numpy().astype(FLOAT_TYPE) for var in current_data["inputs"].keys()}
                 else:
                     # multiple variables, but same resolution for all
                     current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
                     current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
                     # get latitude and longitude
-                    current_data['lat'] = current_data['inputs'].lat.to_numpy()
-                    current_data['lon'] = current_data['inputs'].lon.to_numpy()
+                    current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
+                    current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
             # if there is only a single variable, continue on
             else:
                 current_data["inputs"] = current_data["inputs"][var]
                 current_data["target"] = current_data["target"][var]    
                 # get latitude and longitude
-                current_data['lat'] = current_data['inputs'].lat.to_numpy()
-                current_data['lon'] = current_data['inputs'].lon.to_numpy()
+                current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
+                current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
 
             # if a land or ocean mask was used, carry that over
             if experiment_settings['mask']:
-                current_data['land_ocean_mask'] = input_raw.final_mask
+                current_data['land_ocean_mask'] = input_raw.final_mask.astype(FLOAT_TYPE)
             else:
-                current_data['land_ocean_mask'] = xr.DataArray(data=1)
+                current_data['land_ocean_mask'] = xr.DataArray(data=1).astype(FLOAT_TYPE)
                 
+            # re-type the data to 32 bit
+            current_data['inputs'] = current_data['inputs'].assign_coords(lat=current_data['inputs']['lat'].astype(FLOAT_TYPE),
+                                                                          lon=current_data['inputs']['lon'].astype(FLOAT_TYPE),
+                                                                          member=current_data['inputs']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+            current_data['target'] = current_data['target'].assign_coords(lat=current_data['target']['lat'].astype(FLOAT_TYPE),
+                                                                          lon=current_data['target']['lon'].astype(FLOAT_TYPE),
+                                                                          member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
             # save processed data in pickle format
             with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
                 pickle.dump(current_data, filename)
