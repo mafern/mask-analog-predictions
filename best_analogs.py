@@ -9,35 +9,32 @@ import run_experiments as rexp
 import os
 import gzip
 import copy
+import bottleneck as bn
 
-# TODO: explore multiple masks -- different leadtimes to get a coherent time series (starting from a single soi time rather than rolling that forward and projecting 1 year over and over) -- tethering
-#### REWRITE THIS SO THAT INDICES ARE SAVED SEPARATELY -- TAKES A LOT OF TIME TO RESAVE THE INPUTS AND TARGETS WHICH DON'T CHANGE (library file and analog file)
+FLOAT_TYPE = np.float32
+INT_TYPE = np.int32
+PERIOD = 'monthly'
 
 # -------------------------------------------------------------------------------
 # general use functions
 # -------------------------------------------------------------------------------
 
-def get_targets(experiment_name, soi_model, soi_member, variable, n_analogs, prediction_dict=None, soi_index=None,
-                return_average=True, global_mean=False, max_year=None, rank_alpha=None):
+def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_analogs, prediction_dict=None,
+                return_average=True, global_mean=False, max_year=None, rank_alpha=None, soi_signature=None):
     """
     get the best analogs for the given soi model/member
     """
     # load the prediction_dict if none is passed
     if prediction_dict is None:
-        with gzip.open(os.path.join(os.path.dirname(__file__), 'saved_analogs', experiment_name+'.pickle'), 'rb') as file:
-            prediction_dict = pickle.load(file) 
+        prediction_dict = BestAnalogs(experiment_name).prediction_dict
     # make sure there are analogs to get targets from
-    assert prediction_dict['indices'], "no soi analogs calculated yet"
-    # get the soi_index corresponding to the requested soi_model and soi_member for the indices,
-    # or directly if the soi_index argument is not None
-    if soi_index is None:
-        # get the soi based on model/member and take the most recent one (max)
-        soi_index = np.max(np.where((prediction_dict['indices'].soi_model == soi_model) * 
-                                    (prediction_dict['indices'].soi_member == soi_member))[0])
+    assert len(list(prediction_dict['analogs'].keys())) > 0, "no soi analogs calculated yet"
 
+    if soi_signature is None:
+        # get the soi savename corresponding to the requested soi_model, soi_member, and tether
+        soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
     # get the indices for the selected soi
-    soi_indices = prediction_dict['indices'].isel(soi_index=soi_index)
-
+    analog_indices = prediction_dict['analogs'][soi_signature]
     # weights and leadtime
     weights = np.cos(np.deg2rad(prediction_dict['target'].lat))
     leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
@@ -51,63 +48,65 @@ def get_targets(experiment_name, soi_model, soi_member, variable, n_analogs, pre
                          (prediction_dict['target'].member == soi_member))[0]
     
     # get the soi (aka the truth))
-    truth = prediction_dict['target'].isel(member=soi_index)[variable]
+    truth = prediction_dict['target'].isel(sample=soi_index[tether-1:])[variable]
+    truth = truth.drop('sample').rename({'sample': 'time'}).assign_coords({"member": ("time", truth.member.data), "time": ("time", truth.time.data)})
     if global_mean:
         truth = truth.weighted(weights).mean(("lon", "lat"), skipna=True)
-    # get times when the truth is not nan
-    times = np.unique(np.where(~np.isnan(truth))[0])
-    truth = truth[times]
-    # keep only the times where the truth is not nans (targets will extend leadtime further than this)
-    soi_indices = soi_indices.isel(time=times)
+
     # get the target selection variables, either unconstrained or constrained to be earlier than max_year
     if max_year is not None:
-        # separate out the data that will select the correct targets
-        best_analog_times = soi_indices.best_analog_times
-        best_analog_members = soi_indices.best_analog_members
-        # make a boolean matrix of the analogs that are from earlier than max_year
-        max_year_bool = soi_indices['best_input_times.year'] < max_year
-        # need to go through each time, since these occur in different locations (then drop these)
-        bat_list = [best_analog_times.isel(time=ii).where(max_year_bool.isel(time=ii)).dropna('analog_size') for ii in range(times.size)]
-        bam_list = [best_analog_members.isel(time=ii).where(max_year_bool.isel(time=ii)).dropna('analog_size') for ii in range(times.size)]
-        # keep only the number of analogs requested
-        best_analog_times = xr.concat(bat_list, dim='time').isel(analog_size=np.arange(n_analogs)).astype(int)
-        best_analog_members = xr.concat(bam_list, dim='time').isel(analog_size=np.arange(n_analogs)).astype(int)
+        max_year_inds = analog_indices['best_input_times.year'].data < max_year
+        # matching model, member, year (add leadtime to get prediction target)
+        best_years = analog_indices['best_input_times.year'].data[max_year_inds].reshape(analog_indices.time.size, -1)[:, np.arange(n_analogs)] + leadtime
+        best_years = xr.DataArray(best_years, dims=["time", "analogs"], coords={"time": ("time", analog_indices.soi_time.data)})
+        best_years = (prediction_dict['target']['time.year'] == best_years.drop("time"))
+        best_members = analog_indices['best_input_members'].data[max_year_inds].reshape(analog_indices.time.size, -1)[:, np.arange(n_analogs)]
+        best_members = xr.DataArray(best_members, dims=["time", "analogs"], coords={"time": ("time", analog_indices.soi_time.data)})
+        best_members = (prediction_dict['target'].member == best_members.drop("time"))
+        best_models = analog_indices['best_input_models'].data[max_year_inds].reshape(analog_indices.time.size, -1)[:, np.arange(n_analogs)]
+        best_models = xr.DataArray(best_models, dims=["time", "analogs"], coords={"time": ("time", analog_indices.soi_time.data)})
+        best_models = (prediction_dict['target'].model == best_models.drop("time"))
+        best_samples = best_models * best_members * best_years
     else:
-        # separate out the data that will select the correct targets and keep only the number of analogs requested
-        best_analog_times = soi_indices.best_analog_times.isel(analog_size=np.arange(n_analogs))
-        best_analog_members = soi_indices.best_analog_members.isel(analog_size=np.arange(n_analogs))
+        # matching model, member, year (add leadtime to get prediction target)
+        best_models = analog_indices.isel(analogs=np.arange(n_analogs))['best_input_models']
+        best_models = (prediction_dict['target'].model == best_models)
+        best_members = analog_indices.isel(analogs=np.arange(n_analogs))['best_input_members']
+        best_members = (prediction_dict['target'].member == best_members)
+        best_years = analog_indices.isel(analogs=np.arange(n_analogs))['best_input_times.year'] + leadtime
+        best_years = (prediction_dict['target']['time.year'] == best_years)
+        best_samples = best_models * best_members * best_years
 
-    # get the prediction for the SOI
-    soi_prediction = prediction_dict['target'].isel(member=best_analog_members, time=best_analog_times+leadtime)
-    # add prediction time
-    new_time_range = pd.date_range(start=str(soi_prediction['soi_time.year'].min().data + leadtime)[:4] + str(soi_prediction['soi_time'].min().data)[4:], 
-                                   end=str(soi_prediction['soi_time.year'].max().data + leadtime)[:4] + str(soi_prediction['soi_time'].max().data)[4:], freq='1Y')
-    soi_prediction['time'] = new_time_range
-    soi_prediction = soi_prediction[variable].convert_calendar("noleap", dim='time')
-    # add selected analog time
-    soi_prediction['analog_time'] = soi_indices.best_input_times.isel(analog_size=np.arange(n_analogs))
+    # get the prediction -- first reorganize the coordinates for ease of use
+    targets = prediction_dict['target'].drop('sample').assign_coords({'member': ("sample", prediction_dict['target'].member.data), 'analog_time': ("sample", prediction_dict['target']['time.year'].data)})
+    for ii in range(analog_indices.time.size):
+        if ii == 0:
+            soi_prediction = targets.isel(sample=np.where(best_samples.isel(time=ii))[0]).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
+        else:
+            soi_prediction = xr.concat([soi_prediction, targets.isel(sample=np.where(best_samples.isel(time=ii))[0]).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
     # now convert to global mean if requested (predictions)
     if global_mean:
         soi_prediction = soi_prediction.weighted(weights).mean(("lon", "lat"), skipna=True)
     
     # get the min and max at each time across the selected analogs    
-    prediction_min = soi_prediction.min("analog_size", skipna=True)
-    prediction_max = soi_prediction.max("analog_size", skipna=True)
+    prediction_min = soi_prediction.min("sample", skipna=True)
+    prediction_max = soi_prediction.max("sample", skipna=True)
 
     # return either the average of the analogs, or all of them still separated
     if return_average:
         # get the average of the analogs, if requested
         # TODO: weighted mean option as power law?
         if rank_alpha is None:
-            soi_prediction = soi_prediction.mean('analog_size', skipna=True)
+            soi_prediction = soi_prediction.mean('sample', skipna=True)
         else:
-            soi_prediction = soi_prediction.mean('analog_size', skipna=True)
+            soi_prediction = soi_prediction.mean('sample', skipna=True)
 
-    return(truth.squeeze(), soi_prediction.squeeze(), prediction_min.squeeze(), prediction_max.squeeze())
+    return(truth.squeeze(), soi_prediction[variable].squeeze(), prediction_min[variable].squeeze(), prediction_max[variable].squeeze())
 
 # -------------------------------------------------------------------------------
 
-def get_full_analog_range(prediction_dict, soi_model, soi_member, variable, global_mean=False, minmax=True):
+def get_full_analog_range(experiment_name, prediction_dict, soi_model, soi_member, variable, global_mean=False, minmax=True):
+    leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
     # get the soi index and the full range of analog predictions
     if "global" in soi_model or "regional" in soi_model or "mspecial" in soi_model:
         # return the experiment name without the "global", "regional", or "mspecial" suffix
@@ -115,13 +114,15 @@ def get_full_analog_range(prediction_dict, soi_model, soi_member, variable, glob
         soi_model = soi_model[:-(suffix_ind+1)]
     soi_index = np.where((prediction_dict['target'].model == soi_model) * 
                          (prediction_dict['target'].member == soi_member))[0]
-    # get the soi (aka the truth))
-    truth = prediction_dict['target'].isel(member=soi_index)[variable]
-    # get times when the truth is not nan
-    times = np.unique(np.where(~np.isnan(truth))[0])
-    all_inds = np.arange(prediction_dict['target'].member.size)
+    # get the indices for non soi targets
+    all_inds = np.arange(prediction_dict['target'].sample.size)
     non_soi_inds = np.setdiff1d(all_inds, soi_index)
-    non_soi_analogs = prediction_dict['target'].isel(member=non_soi_inds, time=times)
+    # get the library minus the soi
+    non_soi_analogs = prediction_dict['target'].isel(sample=non_soi_inds)
+    # get the time range to return -- from the earliest soi, to the last prediction
+    min_time, max_time = prediction_dict['target'].isel(sample=soi_index)['time.year'][[0, -1]] + [0, leadtime]
+    time_inds = np.where((non_soi_analogs['time.year'] >= min_time) & (non_soi_analogs['time.year'] <= max_time))[0]
+    non_soi_analogs = non_soi_analogs.isel(sample=time_inds).unstack()
     if global_mean:
         weights = np.cos(np.deg2rad(prediction_dict['target'].lat))
         non_soi_analogs = non_soi_analogs.weighted(weights).mean(("lon", "lat"), skipna=True)
@@ -149,9 +150,16 @@ class BestAnalogs():
     """
     Class for processing analog library, selecting best analogs for a given SOI.
     """
-    def __init__(self, experiment_name, model_list=None, n_members=None, data_period=None):
+    def __init__(self, experiment_name, model_list=None, n_members=None):
         # save the experiment_name, load the corresponding mask
         self.experiment_name = experiment_name
+        analog_path = os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name)
+        # make directory for saving analogs
+        if not os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_analogs', experiment_name)):
+            os.makedirs(os.path.join(os.path.dirname(__file__), 'saved_analogs', experiment_name))
+        # get experiment settings
+        experiment_settings = rexp.Experiments().get_experiment(experiment_name)
+        self.leadtime = experiment_settings['leadtime']
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         
         # get the training and validation data so they can be avoided in the soi and analogs
@@ -167,21 +175,27 @@ class BestAnalogs():
         
         # initialize the prediction_dict object (lat and lon from the training data)
         self.prediction_dict = {}
+        self.prediction_dict['analogs'] = {}
         self.prediction_dict['lat'] = split_data['lat']
         self.prediction_dict['lon'] = split_data['lon']
-            
+
+        # construct or load a library of analogs    
         try:
             # check if processed prediction dataset file already exists by trying to load
-            with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "rb") as filename:
-                self.prediction_dict = pickle.load(filename)
+            with gzip.open(analog_path+'/inputs.pickle', "rb") as filename:
+                self.prediction_dict['inputs'] = pickle.load(filename)
+            with gzip.open(analog_path+'/target.pickle', "rb") as filename:
+                self.prediction_dict['target'] = pickle.load(filename)
         except:
             # if file does not exist, check that models and members have been passed
             assert (model_list is not None and n_members is not None), "no analog library, pass models and members to generate" 
             # start a new file by processing the models/members requested
-            self.process_new_data(experiment_name, model_list, n_members, data_period)
+            self.process_new_data(experiment_name, model_list, n_members)
             # and save the new prediction dataset
-            with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
-                pickle.dump(self.prediction_dict, filename)                
+            with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
+                pickle.dump(self.prediction_dict['inputs'], filename)     
+            with gzip.open(analog_path+'/target.pickle', "wb") as filename:
+                pickle.dump(self.prediction_dict['target'], filename)                
         else:
             # if try succeeded, we have a prediction dataset, but may want to add more data to it
             # add the used_members and use_models arrays with the prediction_dict (avoid saving the same data again)
@@ -189,28 +203,34 @@ class BestAnalogs():
             self.used_models = np.concatenate([self.used_models, self.prediction_dict['inputs'].model.to_numpy()])
             # call process_new_data with model_list and n_members which will add new data to the dataset
             if model_list is not None and n_members is not None:
-                self.process_new_data(experiment_name, model_list, n_members, data_period)
+                self.process_new_data(experiment_name, model_list, n_members)
                 # and save the expanded prediction dataset
-                with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
-                    pickle.dump(self.prediction_dict, filename)
+                with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
+                    pickle.dump(self.prediction_dict['inputs'], filename)     
+                with gzip.open(analog_path+'/target.pickle', "wb") as filename:
+                    pickle.dump(self.prediction_dict['target'], filename) 
 
-        # check if analogs have been selected for any sois
+        # load any previously calculated analogs for specific sois
         try:
-            print('previously saved analogs for:', *self.prediction_dict['indices'].soi_model.data)
+            analogs = glob.glob(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, '*'))
+            # drop the inputs and target from this list of files
+            analogs.remove(analog_path+'/inputs.pickle')
+            analogs.remove(analog_path+'/target.pickle')
+            print('previously saved analogs:', *[np.sort(analogs)[ii].split('/')[-1][:-7] for ii in range(len(analogs))])
+            for analog in analogs:
+                with gzip.open(analog, 'rb') as file:
+                    self.prediction_dict['analogs'][analog.split('/')[-1][:-7]] = pickle.load(file)
         except:
             print('no previouly saved analogs to load!')
 
 # -------------------------------------------------------------------------------
 
-    def process_new_data(self, experiment_name, model_list, new_members=-1, data_period=None):
+    def process_new_data(self, experiment_name, model_list, new_members=-1):
         # n_members=-1 means return all the rest of the members from each model
         
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(experiment_name)
         variables = experiment_settings['variable_list']
-        # if no data_period given, default to previously used
-        if data_period is None:
-            data_period = experiment_settings['data_period']
         # remove some of the processing steps that are not necessary for the prediction part
         # (sync_time not needed, shift_inout_time unnecessarily removes dates, regional_mean can be done later)
         remove_steps = ["sync_time(experiment_settings['time_range'])",
@@ -227,7 +247,7 @@ class BestAnalogs():
         # load the new raw data
         for ii, model in enumerate(model_list):
             # glob all the files and sort -- just used to get correct indices
-            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', data_period, model, variables[0], '*')))
+            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', PERIOD, model, variables[0], '*')))
 
             # remove indices corresponding to model/members that are in this models used_members
             model_used_members = self.used_members[np.where(self.used_models == model)]
@@ -247,7 +267,7 @@ class BestAnalogs():
             if model_new_members.size == 0:
                 print("skipping "+model)
                 continue
-            input_raw = _dp.DataProcessing([model], variables, data_period, list(model_new_members), experiment_settings['seed'])
+            input_raw = _dp.DataProcessing([model], variables, PERIOD, list(model_new_members), experiment_settings['seed'])
             for var in variables:
                 # make the resolution the same as the previously processed datasets
                 input_raw.attr_dictionary[var]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
@@ -296,16 +316,32 @@ class BestAnalogs():
                 inputs_raw = xr.concat([inputs_raw, input_raw], dim="member")
                 outputs_raw = xr.concat([outputs_raw, output_raw], dim="member")
 
+        # re-type the data to 32 bit
+        inputs_raw = inputs_raw.assign_coords(lat=inputs_raw['lat'].astype(FLOAT_TYPE),
+                                              lon=inputs_raw['lon'].astype(FLOAT_TYPE),
+                                              member=inputs_raw['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+        outputs_raw = outputs_raw.assign_coords(lat=outputs_raw['lat'].astype(FLOAT_TYPE),
+                                                lon=outputs_raw['lon'].astype(FLOAT_TYPE),
+                                                member=outputs_raw['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+        # compress dimensions time and member to sample
+        inputs_raw = inputs_raw.stack(sample=("member", "time"))
+        outputs_raw = outputs_raw.stack(sample=("member", "time"))
+        # get rid of samples that are all nans
+        good_inds = np.where(~np.isnan(inputs_raw[variables[0]].mean(['lat', 'lon'], skipna=True)))[0]
+        inputs_raw = inputs_raw.isel(sample=good_inds)
+        good_inds = np.where(~np.isnan(outputs_raw[variables[0]].mean(['lat', 'lon'], skipna=True)))[0]
+        outputs_raw = outputs_raw.isel(sample=good_inds)
+
         try:
             # concatenate this model/variable onto the existing self.prediction_dict["inputs"] and self.prediction_dict["target"]
-            self.prediction_dict["inputs"] = xr.concat([self.prediction_dict["inputs"], inputs_raw], dim="member")
-            self.prediction_dict["target"] = xr.concat([self.prediction_dict["target"], outputs_raw], dim="member")
+            self.prediction_dict["inputs"] = xr.concat([self.prediction_dict["inputs"], inputs_raw], dim="sample")
+            self.prediction_dict["target"] = xr.concat([self.prediction_dict["target"], outputs_raw], dim="sample")
         except:
             self.prediction_dict["inputs"] = inputs_raw
             self.prediction_dict["target"] = outputs_raw
-        
-# -------------------------------------------------------------------------------
     
+# -------------------------------------------------------------------------------
+
     def _get_single_soi_analogs(self, data_iterable):
         """
         get indices ranking the analogs from best to worst for a single state of interest (soi),
@@ -320,46 +356,50 @@ class BestAnalogs():
             - soi_ds: a xarray DataSet containing the analog indices (member and time) sorted from best to worst,
             as well as the soi model name, soi member number, and soi time.
         """
-        weighted_soi, weighted_analogs = data_iterable
+        weighted_soi, weighted_analogs, weights = data_iterable
 
-        # get the mse between the single soi and the library of analogs (both weighted)
-        mse = ((weighted_analogs - weighted_soi)**2).mean(dim=('lat', 'lon'), skipna=True).to_array().to_numpy().squeeze()
-        
-        if mse.ndim == 3:
-            # if there are multiple variables, take mean over mse for all variables
-            mse = mse.mean(axis=0)
-        # argsort then get corresponding indices for best members and times
-        best_times, best_members = np.dstack(np.unravel_index(np.argsort(mse.ravel()), mse.shape)).squeeze().T
+        mse = 0
+        for var in list(weighted_soi.data_vars):
+            # reshape analog and soi for faster computation (broadcasting)
+            # analogs = weighted_analogs.transpose('sample', 'lat', 'lon')[var].to_numpy()
+            analogs = weighted_analogs[var].to_numpy()
+            soi = weighted_soi.expand_dims('placeholder', axis=1).transpose('sample', 'placeholder', 'lat', 'lon')[var].to_numpy()
+            # calculate mse and sort by this
+            mse += np.mean(bn.nanmean(bn.nanmean((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
+        best_samples = np.argsort(mse)
+
+        # keep only the last time in the trend -- the actual map to predict from
+        weighted_analogs = weighted_analogs.isel(trend=-1)
 
         # create a DataSet for this soi with: soi model, member, and time coordinates,
         # and analog time sorted indices, analog member & model sorted indices as data_variables
         soi_ds = xr.Dataset(
             data_vars=dict(
-                best_analog_times=(["soi_index", "time", "analog_size"], best_times.reshape(1, 1, -1)),
-                best_analog_members=(["soi_index", "time", "analog_size"], best_members.reshape(1, 1, -1)),
-                best_input_times=(["soi_index", "time", "analog_size"], weighted_analogs.time[best_times].data.reshape(1, 1, -1)),
-                best_input_members=(["soi_index", "time", "analog_size"], weighted_analogs.member[best_members].data.reshape(1, 1, -1).astype(int)),
-                best_input_models=(["soi_index", "time", "analog_size"], weighted_analogs.model[best_members].data.reshape(1, 1, -1))
+                best_input_times=(["time", "analogs"], weighted_analogs.time[best_samples].data.reshape(1, -1)),
+                best_input_members=(["time", "analogs"], weighted_analogs.member[best_samples].data.reshape(1, -1).astype(INT_TYPE)),
+                best_input_models=(["time", "analogs"], weighted_analogs.model[best_samples].data.reshape(1, -1))
             ),
             coords=dict(
-                soi_model=("soi_index", [self.soi_model_name]),
-                soi_member=("soi_index", [weighted_soi.member.data]),
-                soi_time=("time", [pd.to_datetime(str(weighted_soi.time.dt.strftime("%Y-%m-%d").to_numpy()))])
-                  )
+                # soi_time=("time", [pd.to_datetime(str(weighted_soi.time[-1].dt.strftime("%Y-%m-%d").to_numpy()))])
+                soi_time=("time", list(weighted_soi.time[-1:].data))
+                    )
         )
-        
         return(soi_ds)
         
 # -------------------------------------------------------------------------------
     
-    def get_all_soi_analogs(self, soi_model, soi_member, n_proc=None, quant=None, mask_type='weights'):
+    def get_all_soi_analogs(self, soi_model, soi_member, tether=1, savename=None, n_proc=None, quant=None, mask_type='weights'):
         """
         multiprocessing for loop to get all soi analogs for an observational dataset or single model/member,
         i.e. the full time series of sois for a given model/member or observational dataset
         """
-        # get experiment settings
-        experiment_settings = rexp.Experiments().get_experiment(self.experiment_name)
-        leadtime = experiment_settings['leadtime']
+        assert tether >= 1, "must match on at least one time, minimum tether value is 1"
+        if savename is None:
+            savename = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
+        # check that this analog is not already saved
+        analog_exists = os.path.exists(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'))
+        assert not analog_exists, 'analog with savename ' + savename + '.pickle exists -- to replace, delete the current file and re-run'
+
         # use a threshold for the mask to remove low relevance regions
         mask_object = self.mask_object
         # default soi name (can be updated if using global 1s map, or regional 1s map)
@@ -389,31 +429,35 @@ class BestAnalogs():
             mask_object = mask_object.where(~bool_map, max_mask_weight)
             self.soi_model_name = soi_model+'_mspecial'
 
-
         # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
         # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
         try:
             soi_index = np.where((self.prediction_dict['inputs'].model == soi_model) *
-                                 (self.prediction_dict['inputs'].member == soi_member))[0][0]
-            soi_inputs = self.prediction_dict['inputs'].isel(member=soi_index) * mask_object
+                                 (self.prediction_dict['inputs'].member == soi_member))[0]
+            soi_inputs = self.prediction_dict['inputs'].isel(sample=soi_index) * mask_object
         except:
             print('that SOI is not in the already processed prediction_dict')
             
         # now remove this particular soi member from the analog library
         analog_inds = np.setdiff1d(np.arange(self.prediction_dict['inputs'].member.size), soi_index)
-        weighted_analogs = self.prediction_dict['inputs'].isel(member=analog_inds) * mask_object
-
-        # these steps ensure that inputs with corresponding targets are not picked (nan, so they move to the end of the best matches)
-        # nan the last leadtime years of the inputs (no corresponding target)
-        max_year = soi_inputs['time.year'][-1].data
-        weighted_analogs = weighted_analogs.where(weighted_analogs['time.year'] < max_year - leadtime)
-        # grab the first variable name (assumes all variables have the same nans)
-        var = list(self.prediction_dict['inputs'].keys())[0]
-        # find the times/members when the entire entry is nan for the target
-        target_nan_grid = np.roll(self.prediction_dict['target'].isel(member=analog_inds)[var].mean(['lat', 'lon'], skipna=True).to_numpy(), -leadtime, axis=0)
-        target_nan_grid = ~np.isnan(target_nan_grid.reshape(target_nan_grid.shape + (1, 1)))
-        # make the inputs nan in the corresponding locations where the target is nan
-        weighted_analogs = weighted_analogs.where(target_nan_grid)
+        weighted_analogs = self.prediction_dict['inputs'].isel(sample=analog_inds) * mask_object
+        
+        # empty gets filled, so need to remove the first entry before using
+        good_inds = np.empty([1, tether], dtype=int)
+        # remove the last leadtime years of the inputs for each model/member (no corresponding target)
+        for model in np.unique(weighted_analogs.model):
+            for member in np.unique(weighted_analogs.isel(sample=np.where(weighted_analogs.model == model)[0]).member):
+                # get each model/member to remove the last leadtime entries and rearrange to be trends for matching
+                cinds = np.where((weighted_analogs.model == model) & (weighted_analogs.member == member))[0][:-self.leadtime]
+                cinds = np.lib.stride_tricks.sliding_window_view(cinds, tether)
+                good_inds = np.concatenate([good_inds, cinds])
+        good_inds_xr = xr.DataArray(data=good_inds[1:], dims=['sample', 'trend'])
+        weighted_analogs = weighted_analogs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
+        
+        # weights for tethering
+        # weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
+        # weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(np.float32)
+        weights = 1/(np.arange(tether, 0, -1)**2).reshape(-1, 1).astype(np.float32)
 
         # set up multiprocessing to get the best analogs for this soi (all times)
         if n_proc is None:
@@ -421,7 +465,7 @@ class BestAnalogs():
             n_proc = mp.cpu_count()
         with mp.Pool(n_proc) as pool:
             # make an iterable function so it can run using mulitprocessing
-            data_iterable = self.soi_iterable(soi_inputs, weighted_analogs)
+            data_iterable = self.soi_iterable(soi_inputs, weighted_analogs, weights, tether)
             # chuncksize is number of states (which is number of times) divided by requested processes
             chunksize = int(soi_inputs.time.size / n_proc)
             # this will iterate through and make a list of results
@@ -434,40 +478,22 @@ class BestAnalogs():
             else:
                 soi_ds = xr.concat([soi_ds, result[ii]], dim='time')
 
-        # combine the best analogs with the prediction_dict -- note that this has all the
-        # targets, including the SOI, so this will have one entry more than the indices
-        self.prediction_dict['indices'] = soi_ds
-        
-        try:
-            # if file already exists, concatenate onto existing by the soi_index dimension
-            failure_reason = "failed to load existing analogs\n" + "file path: " + os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle')
-            with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "rb") as filename:
-                prediction_dict = pickle.load(filename)
-                self.prediction_dict['indices'] = prediction_dict['indices']
-            # limit the number of analogs returned to the number from the first calculation
-            # otherwise, it will try to concatenate different sized analog indices (since
-            # more data could have been added) -- should avoid doing this either way, i.e.
-            # should have the full analog set determined before running get_all_soi_analogs
-            max_analogs = self.prediction_dict['indices'].dims['analog_size']
-            failure_reason = "failed to concatenate new data with existing\n\n"+"new data:\n"+str(soi_ds)+"\n\nexisting data:\n"+str(self.prediction_dict['indices'])
-            self.prediction_dict['indices'] = xr.concat([self.prediction_dict['indices'], soi_ds.isel(analog_size=np.arange(max_analogs))], dim='soi_index')
-        except:
-            print(failure_reason)
-        # and save it
-        with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "wb") as filename:
-            print('saving to:', os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'))
-            pickle.dump(self.prediction_dict, filename)
-        
-        return(self.prediction_dict)
-      
+        # save it now
+        with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=3) as filename:
+            print('saving to:', os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'))
+            pickle.dump(soi_ds, filename)
+        # add it to the dictionary
+        self.prediction_dict['analogs'][savename] = soi_ds
+                
 # -------------------------------------------------------------------------------
     
-    def soi_iterable(self, weighted_soi, weighted_analogs):
+    def soi_iterable(self, weighted_soi, weighted_analogs, weights, tether):
         # make data iterable for use in multiprocessing pool
         """
         Create an iterable for a parallel approach to metric assessment
         """
-        for jj in range(weighted_soi.time.size):
-            yield weighted_soi.isel(time=jj), weighted_analogs
+        for jj in range(tether-1, weighted_soi.time.size):
+            yield weighted_soi.isel(sample=np.arange(jj-tether+1, jj+1)), weighted_analogs, weights
 
 # -------------------------------------------------------------------------------
+
