@@ -111,26 +111,26 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jamin', mask=False, output_period=False, data_period='monthly', roll_period=False, window=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jamin', mask=False, output_period=False, roll_period=False, window=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
                 - experiment_name: name of the experiment (how it will be saved and called)
                 - variable_list: list of variable names to be included in the data
                 - analog_models: which models to use for the analog split (run self.list_variables to see available options)
-                - soi_models: which models to use for the training, and validation splits (run self.list_variables to see available options)
+                - soi_models: which models to use for the training split (run self.list_variables to see available options)
                 - leadtime: time shift between inputs and target (should be a positive integer)
                 - split: list with integer number of members to include in each split of the data (order should be: analog, training, validation)
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
                 - method: which method to use, 'jamin' (input mse predicts region averaged target mse), 'jacob' (input mse predicts target mse), and 'martin' (input mse predicts target map, loss is mse)
+                - val_models: which models to use for the validation split (if None, use the same models as soi_models)
                 - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
                 - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
                 - prediction_activation: activation function used for the network
                 - learning_rate: step size for the training
                 - output_period: either resample the data to a new period (pass a string such as "2M"), resample on the same period (pass None) or do nothing (pass False, default)
-                - data_period: string containing the period for the raw data, should be 'daily' or 'monthly' (default) or 'yearly'
                 - roll_period: calculate rolling mean for the data (pass a positive integer for number of time steps to roll), or do nothing (pass False, default)
                 - window: calculate rolling mean for the target data only
                 - resolutions: resample spatial grid of data, either to coarsest resolution amongst models (pass None, default), to a specified resolution (pass a list [lat_res, lon_res]), or do nothing (pass False)
@@ -159,8 +159,10 @@ class Experiments():
         assert experiment_name not in self.keys, "experiment with that name already exists"
         assert leadtime > 0, "leadtime should be positive for projections"
         assert roll_period > 0 or roll_period is False, "roll_period should positive or False"
-        assert np.all(np.isin(data_period, ['daily', 'monthly', 'yearly'])), "data_period must be 'daily' or 'monthly' or 'yearly'"
         
+        # check validation models
+        if val_models is None:
+            val_models = soi_models
         # fill a dictionary with the data split values
         split = {"analog": split[0], "training": split[1], "validation": split[2]}
 
@@ -253,7 +255,7 @@ class Experiments():
     
     # -------------------------------------------------------------------------------
     
-    def train_experiment_model(self, experiment_name, overwrite_data=False, overwrite_model=False):
+    def train_experiment_model(self, experiment_name, overwrite_data=False, overwrite_model=False, transfer=None):
         # get settings
         experiment_settings = self.get_experiment(experiment_name)
         # get data
@@ -274,7 +276,7 @@ class Experiments():
         tf.random.set_seed(experiment_settings["seed"])
 
         # build the full model for learning the mask: mask, dissimilarity, prediction models
-        model, _, _, _ = build_model.build_interp_model(experiment_settings, np.shape(training_target)[1:], [training_inputs, analog_inputs])
+        model, _, _, _ = build_model.build_interp_model(experiment_settings, np.shape(training_target)[1:], [training_inputs, analog_inputs], transfer=transfer)
 
         # train the model, which will check if the model is already saved first
         # (then load if it does, train and save if it does not)
@@ -294,9 +296,9 @@ class Experiments():
 
     # -------------------------------------------------------------------------------
     
-    def make_mask(self, experiment_name, overwrite_data=False, overwrite_model=False, overwrite_mask=False):
+    def make_mask(self, experiment_name, overwrite_data=False, overwrite_model=False, overwrite_mask=False, transfer=None):
         # get model (train or load) and the processed data
-        models = self.train_experiment_model(experiment_name, overwrite_data=overwrite_data, overwrite_model=overwrite_model)
+        models = self.train_experiment_model(experiment_name, overwrite_data=overwrite_data, overwrite_model=overwrite_model, transfer=transfer)
         # get the mask (both a raw version 'raw_mask' and a scaled/masked version 'mask')
         self.mask = self._make_mask(experiment_name, models, self.processed_data, overwrite_mask=overwrite_mask)
         return self.mask
