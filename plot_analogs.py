@@ -2,12 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as patheffects
 import matplotlib.colors as clr
-import pickle
 import run_experiments as rexp
 import best_analogs as ba
 import metrics
-import os
-import gzip
 import copy
 
 # TODO: add some extremes plots
@@ -49,7 +46,7 @@ class PlotAnalogs():
     """
     Class for plotting analog predictions for a given SOI.
     """
-    def __init__(self, experiment_name, soi_model, soi_member, variable, soi_index=None, fig_path=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, fig_path=None):
         if fig_path is None:
             fig_path = 'figures/'+experiment_name+'/'
         self.fig_path = fig_path
@@ -59,30 +56,32 @@ class PlotAnalogs():
         self.soi_model = soi_model
         self.soi_member = soi_member
         self.variable = variable
-        self.soi_index = soi_index
+        self.tether = tether
         # get the settings so the region name can be used in the figure
         self.settings = rexp.Experiments().get_experiment(self.experiment_name)
         self.leadtime = self.settings['leadtime']
 
         try:
-            # check if processed prediction dataset exists by trying to load
-            with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name+'.pickle'), "rb") as filename:
-                self.prediction_dict = pickle.load(filename)
-            print('previously saved best analogs for:', *self.prediction_dict['indices'].soi_model.data)
+            self.prediction_dict = ba.BestAnalogs(experiment_name).prediction_dict
+            # get the soi savename corresponding to the requested soi_model, soi_member, and tether
+            soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
+            # check the selected soi exists
+            self.prediction_dict['analogs'][soi_signature]
+            print('loaded analogs for', soi_signature)
         except:
-            print('no previouly saved analog library or best analogs to load!')
+            print('no previouly saved analog library or requested analogs does not exist!')
 
         # grab perfect analogs, analog library, and truth
         self.perfect_analogs = metrics.get_perfect_analogs(self.prediction_dict, self.experiment_name, soi_model, soi_member, variable,
-                                                           soi_index=soi_index, global_average=False)
+                                                           global_average=False)
         self.perfect_mean = metrics.get_perfect_analogs(self.prediction_dict, self.experiment_name, soi_model, soi_member, variable,
-                                                        soi_index=soi_index, global_average=True)
+                                                        global_average=True)
         self.analog_library = metrics.get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=False)
         self.library_mean = metrics.get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=True)
-        self.truth, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, 1,
-                                             soi_index=self.soi_index, prediction_dict=self.prediction_dict)
-        self.truth_mean, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, 1,
-                                                  soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True)
+        self.truth, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
+                                             prediction_dict=self.prediction_dict)
+        self.truth_mean, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
+                                                  prediction_dict=self.prediction_dict, global_mean=True)
 
 # -------------------------------------------------------------------------------
 
@@ -90,19 +89,21 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the analog prediction
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                         soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True)
+        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                         prediction_dict=self.prediction_dict, global_mean=True)
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the true values (i.e. the soi target)
         ax.plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=0.75, c='white', label='truth',
                 path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # plot the prediction
-        ax.plot(analog.sel(time=time_slice)['time.year'], analog.sel(time=time_slice), '-', label='analog prediction ('+str(n_analogs)+')',
+        ax.plot(analog.query(time=query_text)['pred_time'], analog.query(time=query_text), '-', label='analog prediction ('+str(n_analogs)+')',
                 lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
 
         # legend, labels, etc.
@@ -113,7 +114,6 @@ class PlotAnalogs():
 
         ax.set_xlabel('prediction year', fontsize=18)
         ax.set_ylabel(self.settings['region']+'\n'+self.variable, fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
 
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -136,14 +136,16 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the targets for the requested soi and variable
-        _, _, prediction_min, prediction_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                                              soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True)
+        _, _, prediction_min, prediction_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                                              prediction_dict=self.prediction_dict, global_mean=True)
         # get the full range of analog predictions
-        all_min, all_max = ba.get_full_analog_range(self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
+        all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
@@ -151,7 +153,7 @@ class PlotAnalogs():
         ax.fill_between(all_min['time.year'].sel(time=time_slice), all_min.sel(time=time_slice), all_max.sel(time=time_slice), color=c_skyline_ll,
                          alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the range of all the analogs
-        ax.fill_between(prediction_min.sel(time=time_slice)['time.year'], prediction_min.sel(time=time_slice), prediction_max.sel(time=time_slice), color=c_sunshine,
+        ax.fill_between(prediction_min.query(time=query_text)['pred_time'], prediction_min.query(time=query_text), prediction_max.query(time=query_text), color=c_sunshine,
                         alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
         ax.plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=0.75, c='white', label='truth',
@@ -165,7 +167,6 @@ class PlotAnalogs():
 
         ax.set_xlabel('prediction year', fontsize=18)
         ax.set_ylabel(self.settings['region']+'\n'+self.variable, fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
 
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -188,11 +189,13 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the all model mean
-        all_model_mean = ba.get_full_analog_range(self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)
+        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)[:-self.leadtime]
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
@@ -211,7 +214,6 @@ class PlotAnalogs():
 
         ax.set_xlabel('prediction year', fontsize=18)
         ax.set_ylabel(self.settings['region']+'\n'+self.variable, fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
 
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -234,15 +236,17 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the analog prediction
-        _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                                           soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True)
+        _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                                           prediction_dict=self.prediction_dict, global_mean=True)
         # get the full range of all models and the model mean
-        all_min, all_max = ba.get_full_analog_range(self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
-        all_model_mean = ba.get_full_analog_range(self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)
+        all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
+        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)[:-self.leadtime]
         # get the perfect analog prediction
         perfect_analogs = self.perfect_mean
 
@@ -253,14 +257,14 @@ class PlotAnalogs():
         ax[0].plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=0.75, c='white', label='truth',
                    path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
         # plot the prediction
-        ax[0].plot(analog.sel(time=time_slice)['time.year'], analog.sel(time=time_slice), '-', label='analog prediction ('+str(n_analogs)+')',
+        ax[0].plot(analog.query(time=query_text)['pred_time'], analog.query(time=query_text), '-', label='analog prediction ('+str(n_analogs)+')',
                    lw=2.66, c=c_sunshine, path_effects=[patheffects.withStroke(linewidth=4, foreground="k")])
         # --------------- plot the ranges and truth (refining spread) --------------- #
         # plot the range of library
         ax[1].fill_between(all_min.sel(time=time_slice)['time.year'], all_min.sel(time=time_slice), all_max.sel(time=time_slice), color=c_skyline_ll,
                            alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the range of all the analogs
-        ax[1].fill_between(analog_min.sel(time=time_slice)['time.year'], analog_min.sel(time=time_slice), analog_max.sel(time=time_slice), color=c_sunshine,
+        ax[1].fill_between(analog_min.query(time=query_text)['pred_time'], analog_min.query(time=query_text), analog_max.query(time=query_text), color=c_sunshine,
                            alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
         ax[1].plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=0.75, c='white', label='truth',
@@ -295,7 +299,6 @@ class PlotAnalogs():
             ax[ii].tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10, labelsize=16)
         # x and y labels, title
         ax[3].set_xlabel('prediction year', fontsize=18)
-        ax[0].set_title(self.settings['region']+', '+str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18, fontweight='bold')
         # add y label just once in the middle
         fig.add_subplot(111, frameon=False)
         plt.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
@@ -319,31 +322,34 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the analog predictions to obtain the models selected
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                             soi_index=self.soi_index, global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+        global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+        analog = analog.query(time=query_text)
         
         # get the models that were selected for the analogs of this soi
-        selected_model = analog.sel(time=time_slice).model
+        selected_model = analog.model
         # get the names of the models that were selected for this soi across all times
-        models = np.unique(selected_model)
+        models, model_counts = np.unique(selected_model, return_counts=True)
         # sort by total number of selections for each model (high to low) -- for keeping it to top ten
-        model_counts = np.unique(selected_model, return_counts=True)[1]
         sorted = np.argsort(model_counts)[::-1]
         models = models[sorted]
         model_counts = model_counts[sorted]
 
         # convert selected models to integers
-        selected_model_int = np.zeros(selected_model.shape, dtype=int)
-        model_member_size = np.zeros(models.size, dtype=int)
+        selected_model_int = np.empty(selected_model.shape, dtype=int)
+        model_member_size = np.empty(models.size, dtype=int)
         for ii, model in enumerate(models):
             selected_model_int[np.where(selected_model == model)] = int(ii)
-            model_member_size[ii] = self.prediction_dict['inputs'].sel(time=time_slice).member[
+            # number of each model in the full library
+            model_member_size[ii] = np.unique(self.prediction_dict['inputs'].member[
                 np.where(self.prediction_dict['inputs'].model == model)[0]
-                ].size
+                ]).size
 
         # make the plot
         fig, ax = plt.subplots(1, 1, figsize=(np.min([models.size, 10]), 5))
@@ -369,7 +375,6 @@ class PlotAnalogs():
         ax.yaxis.set_ticks_position('left')
         ax.xaxis.set_ticks_position('bottom')    
         ax.patch.set_facecolor('none')
-        # ax.set_title('SOI from: '+str(soi_model), fontsize=12, va='top')
         ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
         ax.tick_params(which='both', axis='x', bottom=False)
         ax.set_xlim([bins[0], bins[np.min([models.size, 10])]])
@@ -388,12 +393,14 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
         
         # get the targets for the requested soi and variable to restrict the times
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                         soi_index=self.soi_index, global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
         
         xtimes = analog.sel(time=time_slice)['time.year']
         # get the models that were selected for the analogs of this soi
@@ -443,8 +450,10 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # roll overs some years (centered, so roll_years needs to be odd)
         if roll_years % 2 == 0:
@@ -453,11 +462,11 @@ class PlotAnalogs():
         spread = int((roll_years - 1)/2)
         
         # get the indices for the predicted year (indices where truth is not nan + leadtime)
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                         soi_index=self.soi_index, global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
         # get the x and y axes (year predicted -- 1 per year, and year of analogs -- n_analogs per year)
-        pred_years = analog.sel(time=time_slice)['time.year']
-        analog_years = analog.sel(time=time_slice)['analog_time.year'] + self.leadtime
+        pred_years = analog.query(time=query_text)['pred_time']
+        analog_years = analog.query(time=query_text)['analog_time']
 
         # getting the rolling mean, min, max
         best_analog = np.zeros(pred_years.size - roll_years + 1)
@@ -465,10 +474,10 @@ class PlotAnalogs():
         max_analog = np.zeros(pred_years.size - roll_years + 1)
         for ii in range(spread, best_analog.size+spread):
             best_analog[ii-spread] = analog_years[ii-spread:ii+spread+1].mean()
-            min_analog[ii-spread] = np.quantile(analog_years[ii], 0.2)
-            max_analog[ii-spread] = np.quantile(analog_years[ii], 0.8)
-            # min_analog[ii-spread] = np.nanmin(analog_years[ii])
-            # max_analog[ii-spread] = np.nanmax(analog_years[ii])
+            # min_analog[ii-spread] = np.quantile(analog_years[ii], 0.2)
+            # max_analog[ii-spread] = np.quantile(analog_years[ii], 0.8)
+            min_analog[ii-spread] = np.nanmin(analog_years[ii])
+            max_analog[ii-spread] = np.nanmax(analog_years[ii])
         # roll the soi_times over the same period
         pred_years = pred_years.rolling(time=roll_years, center=False).mean().dropna("time", how="all")
 
@@ -502,30 +511,32 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the targets for the requested soi and variable
-        _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                                           soi_index=self.soi_index, return_average=True, global_mean=True, prediction_dict=self.prediction_dict)
-        _, c_analog, c_analog_min, c_analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                                                 soi_index=self.soi_index, return_average=True, global_mean=True, prediction_dict=self.prediction_dict,max_year=max_year)
+        _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                                           return_average=True, global_mean=True, prediction_dict=self.prediction_dict)
+        _, c_analog, c_analog_min, c_analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                                                 return_average=True, global_mean=True, prediction_dict=self.prediction_dict,max_year=max_year)
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of all the best analogs (unconstrained)
-        ax.fill_between(analog_min.sel(time=time_slice)['time.year'], analog_min.sel(time=time_slice), analog_max.sel(time=time_slice), color=c_flowertrial,
+        ax.fill_between(analog_min.query(time=query_text)['pred_time'], analog_min.query(time=query_text), analog_max.query(time=query_text), color=c_flowertrial,
                         alpha=0.3, path_effects=[patheffects.withStroke(linewidth=1, foreground=c_flowertrial, alpha=0.3)])
         # plot the range of all the best analogs (constrained)
-        ax.fill_between(c_analog_min.sel(time=time_slice)['time.year'], c_analog_min.sel(time=time_slice), c_analog_max.sel(time=time_slice), color=c_horsetooth,
+        ax.fill_between(c_analog_min.query(time=query_text)['pred_time'], c_analog_min.query(time=query_text), c_analog_max.query(time=query_text), color=c_horsetooth,
                         alpha=0.3, path_effects=[patheffects.withStroke(linewidth=1, foreground=c_horsetooth, alpha=0.3)])
         # plot the true values (i.e. the soi target)
         ax.plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=3.33, c=c_midnight, label='truth',
                 path_effects=[patheffects.withStroke(linewidth=5, foreground='white')])
         # plot the prediction (unconstrained)
-        ax.plot(analog.sel(time=time_slice)['time.year'], analog.sel(time=time_slice), label='analogs ('+str(n_analogs)+')',
+        ax.plot(analog.query(time=query_text)['pred_time'], analog.query(time=query_text), label='analogs ('+str(n_analogs)+')',
                 lw=3.33, c=c_flowertrial, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
         # plot the prediction (unconstrained)
-        ax.plot(c_analog.sel(time=time_slice)['time.year'], c_analog.sel(time=time_slice), label='constrained analogs ('+str(n_analogs)+')',
+        ax.plot(c_analog.query(time=query_text)['pred_time'], c_analog.query(time=query_text), label='constrained analogs ('+str(n_analogs)+')',
                 lw=3.33, c=c_horsetooth, path_effects=[patheffects.withStroke(linewidth=5, foreground="k")])
 
         # legend, labels, etc.
@@ -558,15 +569,17 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
+            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
+            query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the analog prediction
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                         soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True, return_average=False)
-        analog = analog.sel(time=time_slice)
+        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
+                                         prediction_dict=self.prediction_dict, global_mean=True, return_average=False)
+        analog = analog.query(time=query_text)
         # get the full range of analog predictions
-        all_min, all_max = ba.get_full_analog_range(self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
+        all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
 
         # now make the plot
         year_range = analog['time.year'].max() - analog['time.year'].min()
@@ -576,7 +589,7 @@ class PlotAnalogs():
         ax.fill_between(all_min['time.year'].sel(time=time_slice), all_min.sel(time=time_slice), all_max.sel(time=time_slice), color=c_skyline_ll,
                          alpha=0.5, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the prediction distributions
-        vplot = ax.violinplot([analog[ii].to_numpy() for ii in range(analog.time.size)], positions=analog['time.year'].to_numpy(), widths=1.5, showextrema=False, points=n_analogs, bw_method='silverman', side='high')
+        vplot = ax.violinplot([analog[ii].to_numpy() for ii in range(analog.time.size)], positions=analog['pred_time'].to_numpy(), widths=1.5, showextrema=False, points=n_analogs, bw_method='silverman', side='high')
         for pc in vplot['bodies']:
             pc.set_path_effects([patheffects.withStroke(linewidth=2, foreground="k")])
             pc.set_color(c_sunshine)
@@ -609,72 +622,6 @@ class PlotAnalogs():
         else:
             plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
-
-# -------------------------------------------------------------------------------
-
-    def plot_comparison_dists(self, n_analogs, savename=None, time_range=None):
-        ### NOTE: nans mess up the analog library mean
-        # restrict to specific time range, if requested
-        if time_range is not None:
-            time_slice = slice(time_range[0], time_range[1])
-        else:
-            time_slice = slice("0000", "9999")
-
-        # get the analog prediction
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.variable, n_analogs,
-                                         soi_index=self.soi_index, prediction_dict=self.prediction_dict, global_mean=True, return_average=False)
-        analog = analog.sel(time=time_slice)
-        # get the full range of analog predictions
-        non_soi_analogs = self.library_mean.sel(time=time_slice)
-
-        # now make the plot
-        year_range = analog['time.year'].max() - analog['time.year'].min()
-        x_length = (year_range + 50) / 6.6
-        fig, ax = plt.subplots(1, 1, figsize=(x_length, 5))
-        # plot the model library distributions
-        vplot = ax.violinplot([non_soi_analogs[ii].to_numpy() for ii in range(non_soi_analogs.time.size)], positions=non_soi_analogs['time.year'].to_numpy(), widths=0.75, showextrema=False, points=non_soi_analogs.member.size, bw_method='silverman', side='low')
-        for pc in vplot['bodies']:
-            pc.set_path_effects([patheffects.withStroke(linewidth=1.5, foreground="k")])
-            pc.set_color(c_skyline_l)
-            pc.set_alpha(0.7)
-        # plot the prediction distributions
-        vplot = ax.violinplot([analog[ii].to_numpy() for ii in range(analog.time.size)], positions=analog['time.year'].to_numpy(), widths=0.75, showextrema=False, points=n_analogs, bw_method='silverman', side='high')
-        for pc in vplot['bodies']:
-            pc.set_path_effects([patheffects.withStroke(linewidth=1.5, foreground="k")])
-            pc.set_color(c_sunshine)
-            pc.set_alpha(0.7)
-        # plot the true values (i.e. the soi target)
-        ax.plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), '-o', lw=0.75, c='white', label='truth',
-                path_effects=[patheffects.withStroke(linewidth=4, foreground=c_midnight)])
-        
-        # legend, labels, etc.
-        handles, labels = ax.get_legend_handles_labels()
-        handles = [copy.copy(ha) for ha in handles]
-        leg = plt.legend(handles=handles, labels=labels, loc='upper left', ncols=2, frameon=False, prop={'weight':'bold', 'size':'15'})
-
-        ax.set_xlabel('year', fontsize=18)
-        ax.set_ylabel(self.settings['region']+'\n'+self.variable, fontsize=18)
-        ax.set_title(str(self.settings['leadtime'])+' year lead, '+str(self.settings['window'])+' year window', fontsize=18)
-
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.yaxis.set_ticks_position('left')
-        ax.xaxis.set_ticks_position('bottom')    
-        ax.patch.set_facecolor('none')
-        ax.tick_params(which='both', direction='inout', right=False, labelright=False, labelleft=True, length=10)
-        ax.set_xlim([self.truth_mean.sel(time=time_slice)['time.year'].min()-3, analog['time.year'].max()+3])
-        if savename is None:
-            savename = self.experiment_name+'_comp_dists.pdf'
-            plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
-        elif savename is False:
-            pass
-        else:
-            plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
-        plt.show()
-
-# -------------------------------------------------------------------------------
-
-# -------------------------------------------------------------------------------
 
 # -------------------------------------------------------------------------------
 
