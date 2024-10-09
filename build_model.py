@@ -17,7 +17,6 @@ import numpy as np
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
-
 def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
                        mask_initial_value, normalize_weights_bool):
     """
@@ -161,6 +160,62 @@ def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
+def make_transfer_model(prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
+    """
+    """
+    ## updated prediction model (doesn't actually predict now though . . .)
+
+    # input is mse, single-valued
+    dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
+    x = tf.keras.layers.Layer()(dissimilarity_input_layer)
+    
+    # now create the dense layers for the prediction model
+    for nodes in prediction_model_nodes:
+        x = tf.keras.layers.Dense(
+            nodes, activation=prediction_model_act,
+            kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+4),
+            bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+1),
+            )(x)
+
+    # define model -- in: weighted input map dissimilarity, out: future dissimilarity
+    prediction_model = tf.keras.Model(
+        inputs=[dissimilarity_input_layer],
+        outputs=[x],
+        name='prediction_model'
+        )
+    
+    ## now define the transfer model
+    
+    input_layer = tf.keras.layers.Input(shape=(5,))
+    x = tf.keras.layers.Layer()(input_layer)
+
+    # add a single layer to be trained when transfer learning
+    x = tf.keras.layers.Dense(
+        prediction_model_nodes[-1], activation=prediction_model_act,
+        kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+4),
+        bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+1),
+        )(x)
+    
+    # Prediction layer -- single value difference between targets
+    prediction = tf.keras.layers.Dense(
+        1,
+        activation=output_activation,
+        kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed),
+        bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+2),
+        )(x)
+
+    # define model -- in: weighted input map dissimilarity, out: nodes shaped output for prediction model
+    transfer_model = tf.keras.Model(
+        inputs=[input_layer],
+        outputs=[prediction],
+        name='transfer_model'
+        )
+    
+    return prediction_model, transfer_model
+
+# -------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+
 def make_prediction_model_map(target_shape, prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
     """
     model part three: uses the dissimilarity score to predict the dissimilarity of the maps later
@@ -201,8 +256,66 @@ def make_prediction_model_map(target_shape, prediction_model_nodes, prediction_m
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
+def make_transfer_model_map(target_shape, prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
+    """
+    """
+    ## updated prediction model (doesn't actually predict now though . . .)
+
+    # input is mse, single-valued
+    dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
+    x = tf.keras.layers.Layer()(dissimilarity_input_layer)
+    
+    # Add all the Dense Layers
+    for nodes in prediction_model_nodes:
+        x = tf.keras.layers.Dense(
+            nodes, activation=prediction_model_act,
+            kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+4),
+            bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+1),
+            )(x)
+        
+    # define model -- in: weighted input map dissimilarity, out: input to transfer model
+    prediction_model = tf.keras.Model(
+        inputs=[dissimilarity_input_layer],
+        outputs=[x],
+        name='prediction_model'
+        )
+    
+    ## now define the transfer model
+
+    input_layer = tf.keras.layers.Input(shape=(5,))
+    x = tf.keras.layers.Layer()(input_layer)
+
+    # add a single layer to be trained when transfer learning
+    x = tf.keras.layers.Dense(
+        prediction_model_nodes[-1], activation=prediction_model_act,
+        kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+4),
+        bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+1),
+        )(x)
+    
+    # prediction layer -- predict regional map (flattened)
+    prediction = tf.keras.layers.Dense(
+        np.product(target_shape),
+        activation=output_activation,
+        kernel_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed),
+        bias_initializer=tf.keras.initializers.RandomNormal(seed=rng_seed+2),
+        )(x)
+    # reshape to a map for loss function
+    prediction = tf.keras.layers.Reshape(target_shape)(prediction)
+
+    # define model -- in: weighted input map dissimilarity, out: nodes shaped output for prediction model
+    transfer_model = tf.keras.Model(
+        inputs=[input_layer],
+        outputs=[prediction],
+        name='transfer_model'
+        )
+
+    return prediction_model, transfer_model
+
+# -------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+
 # Combining all three models
-def build_interp_model(settings, target_shape, x_train):
+def build_interp_model(settings, target_shape, x_train, transfer=None):
     ""
 
     # model takes in soi and analog and returns weighted versions as well as weight mask
@@ -213,35 +326,53 @@ def build_interp_model(settings, target_shape, x_train):
                                                              mask_initial_value=settings["mask_init"],
                                                              normalize_weights_bool=settings["norm_weights"]
                                                              )
-    
-    # model takes in weighted maps and returns dissimiliarity (mse, assuming soi is truth)
-    dissimilarity_model = make_dissimilarity_model(x_train)
-    
-    # model takes in the dissimilarity above (mse) and predicts dissimilarity in the future
-    if settings['method'] == 'martin':
-        prediction_model = make_prediction_model_map(
-            target_shape,
-            prediction_model_nodes=settings["prediction_nodes"],
-            prediction_model_act=settings["prediction_activation"],
-            rng_seed=settings["seed"],
-            output_activation="linear",
-            )
-    else:
-        prediction_model = make_prediction_model(
-            prediction_model_nodes=settings["prediction_nodes"],
-            prediction_model_act=settings["prediction_activation"],
-            rng_seed=settings["seed"],
-            output_activation="linear",
-            )
-    
     # take in the soi and analog inputs, return weighted versions and weight mask
     weighted_soi, weighted_analog, weights = mask_model([soi_input, analog_input])
     
+    # model takes in weighted maps and returns dissimiliarity (mse, assuming soi is truth)
+    dissimilarity_model = make_dissimilarity_model(x_train)
     # take in the weighted inputs from above, return their dissimilarity
     dissimilarities = dissimilarity_model([weighted_soi, weighted_analog])
-    
-    # take in the dissimilarity from above, return predicted dissimilarity in the future
-    prediction = prediction_model([dissimilarities])
+
+    # prediction model takes in the dissimilarity and predicts dissimilarity in the future
+    if transfer[3]:
+        if settings['method'] == 'martin':
+            prediction_model, transfer_model = make_transfer_model_map(
+                target_shape,
+                prediction_model_nodes=settings["prediction_nodes"],
+                prediction_model_act=settings["prediction_activation"],
+                rng_seed=settings["seed"],
+                output_activation="linear",
+                )
+        else:
+            prediction_model, transfer_model = make_transfer_model(
+                prediction_model_nodes=settings["prediction_nodes"],
+                prediction_model_act=settings["prediction_activation"],
+                rng_seed=settings["seed"],
+                output_activation="linear",
+                )
+        # take in the transfer model nodes from above, return predicted dissimilarity in the future
+        transfer_in = prediction_model([dissimilarities])
+        # take in the dissimilarity from above, return transfer model nodes
+        prediction = transfer_model([transfer_in])
+    else:
+        if settings['method'] == 'martin':
+            prediction_model = make_prediction_model_map(
+                target_shape,
+                prediction_model_nodes=settings["prediction_nodes"],
+                prediction_model_act=settings["prediction_activation"],
+                rng_seed=settings["seed"],
+                output_activation="linear",
+                )
+        else:
+            prediction_model = make_prediction_model(
+                prediction_model_nodes=settings["prediction_nodes"],
+                prediction_model_act=settings["prediction_activation"],
+                rng_seed=settings["seed"],
+                output_activation="linear",
+                )
+        # take in the dissimilarity from above, return predicted dissimilarity in the future
+        prediction = prediction_model([dissimilarities])
 
     # define the final model -- inputs to prediction for future dissimilarity
     full_model = tf.keras.Model(
@@ -249,5 +380,20 @@ def build_interp_model(settings, target_shape, x_train):
         outputs=[prediction],
         name='full_model'
         )
+    
+    if transfer is not None:
+        # load the weights of the model we are starting from
+        filename = transfer[0] + str(transfer[1]) + '_weights.h5'
+        pretrained_weights_path = os.path.join(os.path.dirname(__file__), 'saved_models', transfer[0], filename)
+        # can change this to prediction_model.load_weights to avoid initializing mask (not sure there is a reason to do this ever though)
+        # prediction_model.load_weights(pretrained_weights_path, by_name=True, skip_mismatch=True)
+        full_model.load_weights(pretrained_weights_path)
+        if transfer[2]:
+            # freeze the layers that should not be updated in training
+            prediction_model.trainable = False
 
     return full_model, mask_model, dissimilarity_model, prediction_model
+
+# -------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+
