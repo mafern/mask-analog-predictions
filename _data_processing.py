@@ -331,11 +331,11 @@ class DataProcessing():
         print('time period and dates synced, now using', self.data_dictionary[var][model].time.size, 'dates')
     
     # -------------------------------------------------------------------------------
-    
+
     def shift_inout_time(self, shift, window=1):
         """
         shift the datasets, i.e. create a leadtime by removing entries from the start or end.
-        
+
         inputs:
             - shift: the number of entries to remove.
             negative values remove shift entries from the end (adding a lag, for input),
@@ -352,10 +352,10 @@ class DataProcessing():
                 for model in self.data_dictionary[var].keys():
                     # drop the first or last shift entries in the datasets
                     if shift > 0:
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(shift - np.floor(window/2).astype(int)))
+                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(shift))
                     else:
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(shift) + np.floor(window/2).astype(int)) + 1))
-        
+                        self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(shift)) + 1))
+
         print('data shifted, now using', self.data_dictionary[var][model].time.size, 'time steps')
     
         
@@ -633,33 +633,33 @@ class DataProcessing():
 
     # -------------------------------------------------------------------------------
 
-    def regional_mean(self, var_list=None):
-        """
-        get the mean for a variable over the entire region for each dataset
+    # def regional_mean(self, var_list=None):
+    #     """
+    #     get the mean for a variable over the entire region for each dataset
         
-        inputs:
-            - var_list: a list of variables that should be converted to lat/lon averages.
-            the entries in var_list need to match the names of the variables of the dataset.
-        outputs:
-            - data_dictionary with global (over remaining region) averages for the
-            variables in var_list.
-            shape will be [time, member].
-        """
-        # if no variables are specified, use all available variables in the data_dictionary
-        if var_list is None:
-            var_list = list(self.data_dictionary.keys())
-        print('calculating mean for variables: ', *var_list)
-        if type(var_list) is not list:
-            var_list = [var_list,]
+    #     inputs:
+    #         - var_list: a list of variables that should be converted to lat/lon averages.
+    #         the entries in var_list need to match the names of the variables of the dataset.
+    #     outputs:
+    #         - data_dictionary with global (over remaining region) averages for the
+    #         variables in var_list.
+    #         shape will be [time, member].
+    #     """
+    #     # if no variables are specified, use all available variables in the data_dictionary
+    #     if var_list is None:
+    #         var_list = list(self.data_dictionary.keys())
+    #     print('calculating mean for variables: ', *var_list)
+    #     if type(var_list) is not list:
+    #         var_list = [var_list,]
         
-        # for each requested variable
-        for var in var_list:
-            # for each model (get down to the xarray level from the dictionary)
-            for model in self.data_dictionary[var].keys():
-                # get the latitude weights
-                weights = np.cos(np.deg2rad(self.data_dictionary[var][model].lat))
-                # get the global mean
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].weighted(weights).mean(("lon", "lat"), skipna=True)
+    #     # for each requested variable
+    #     for var in var_list:
+    #         # for each model (get down to the xarray level from the dictionary)
+    #         for model in self.data_dictionary[var].keys():
+    #             # get the latitude weights
+    #             weights = np.cos(np.deg2rad(self.data_dictionary[var][model].lat))
+    #             # get the global mean
+    #             self.data_dictionary[var][model] = self.data_dictionary[var][model].weighted(weights).mean(("lon", "lat"), skipna=True)
     
     # -------------------------------------------------------------------------------
     
