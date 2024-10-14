@@ -4,16 +4,6 @@ import metrics
 import os
 import numpy as np
 
-# def parse_model(x_input, mask_model, dissimilarity_model, prediction_model):
-    
-#     weighted_soi, weighted_analog, weights = mask_model(x_input)
-#     dissimilarities = dissimilarity_model([weighted_soi, weighted_analog])
-#     prediction = prediction_model([dissimilarities])
-#     __ = gc.collect()  # to fix memory leak
-
-#     return weights.numpy(), dissimilarities.numpy(), prediction.numpy()
-
-
 # -------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------
 
@@ -41,22 +31,11 @@ def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
         # i.e. between instantiation and call
         # defines self.bias which is then used in the call
         def build(self, input_shape):
-            mask_test_path = os.path.join(os.path.dirname(__file__), 'saved_masks', mask_initial_value+'_raw_mask.nc')
-            if os.path.exists(mask_test_path):
-                self.bias = self.add_weight('bias',
-                                            shape=(input_shape[1:]),
-                                            initializer="ones",
-                                            trainable=True,
-                                            constraint=tf.keras.constraints.NonNeg(),)
-                # load the requested raw mask from xarray into a numpy array
-                raw_mask = xr.load_dataarray(mask_test_path).to_numpy().flatten()
-                self.bias.assign(self.bias.numpy() * raw_mask)
-            else:
-                self.bias = self.add_weight('bias',
-                                            shape=(input_shape[1:]),
-                                            initializer=mask_initial_value,
-                                            trainable=True,
-                                            constraint=tf.keras.constraints.NonNeg(),)
+            self.bias = self.add_weight('bias',
+                                        shape=(input_shape[1:]),
+                                        initializer=mask_initial_value,
+                                        trainable=True,
+                                        constraint=tf.keras.constraints.NonNeg(),)
         # redefine call -- normally this returns the inputs
         # in our case, it returns a x-shaped bias
         def call(self, x):
@@ -335,7 +314,7 @@ def build_interp_model(settings, target_shape, x_train, transfer=None):
     dissimilarities = dissimilarity_model([weighted_soi, weighted_analog])
 
     # prediction model takes in the dissimilarity and predicts dissimilarity in the future
-    if transfer[3]:
+    if transfer is "new_layer":
         if settings['method'] == 'martin':
             prediction_model, transfer_model = make_transfer_model_map(
                 target_shape,
@@ -383,12 +362,10 @@ def build_interp_model(settings, target_shape, x_train, transfer=None):
     
     if transfer is not None:
         # load the weights of the model we are starting from
-        filename = transfer[0] + str(transfer[1]) + '_weights.h5'
-        pretrained_weights_path = os.path.join(os.path.dirname(__file__), 'saved_models', transfer[0], filename)
-        # can change this to prediction_model.load_weights to avoid initializing mask (not sure there is a reason to do this ever though)
-        # prediction_model.load_weights(pretrained_weights_path, by_name=True, skip_mismatch=True)
-        full_model.load_weights(pretrained_weights_path)
-        if transfer[2]:
+        filename = settings['transfer_exp'] + '_weights.h5'
+        pretrained_weights_path = os.path.join(os.path.dirname(__file__), 'saved_models', settings['transfer_exp'], filename)
+        full_model.load_weights(pretrained_weights_path, by_name=True, skip_mismatch=True)
+        if transfer == "shallow" or transfer == "new_layer":
             # freeze the layers that should not be updated in training
             prediction_model.trainable = False
 
