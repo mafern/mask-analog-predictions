@@ -13,8 +13,6 @@ logging.disable(logging.WARNING)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.get_logger().setLevel('ERROR')
 
-# TODO: find a way to anchor the learned mask over a trajectory (time), possibly just multiple lead times? tethering?
-
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
     ""
     # random seed to select random subsets of the soi and analog sets
@@ -25,9 +23,9 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         i_soi = rng.choice(np.arange(0, soi_input.shape[0]), batch_size, replace=True)
         i_analog = rng.choice(np.arange(0, analog_input.shape[0]), batch_size, replace=True)
         if settings['method'] == 'jacob':
-            targets = np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=(1, 2))
+            targets = np.mean(np.mean(np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4), axis=2), axis=1)
         else:
-            targets = metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog])
+            targets = np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4) # maps
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
 # -------------------------------------------------------------------------------
@@ -37,9 +35,8 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
     
     """
     experiment_name = settings['experiment_name']
-    seed = settings['seed']
     # check if model already exists or overwrite is on
-    if not (os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5")) and os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model"))) or overwrite_model is True:
+    if not (os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_weights.h5")) and os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_model"))) or overwrite_model is True:
         # model is not already saved or overwrite has been requested, so train and save model
     
         # EARLY STOPPING
@@ -129,7 +126,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         # load model
         model = load_model(settings)
         # load history
-        with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), 'rb') as file:
+        with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_history.pickle"), 'rb') as file:
             history = pickle.load(file)
         return model, history
 
@@ -151,25 +148,23 @@ def save_model_run(model, settings):
         
     """
     experiment_name = settings['experiment_name']
-    seed = settings['seed']
     # Save the model, weights, and history.
     try:
         with warnings.catch_warnings():  # catch very annoying tf warnings
             warnings.simplefilter("ignore")
-            tf.keras.models.save_model(model, os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model"), overwrite=True)
+            tf.keras.models.save_model(model, os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_model"), overwrite=True)
     except:
         print('unable to save the model, skipping saving the full model.')
 
-    model.save_weights(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_weights.h5"))
+    model.save_weights(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_weights.h5"))
 
-    with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_history.pickle"), "wb") as handle:
+    with open(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_history.pickle"), "wb") as handle:
         pickle.dump(model.history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # -------------------------------------------------------------------------------
 
 def load_model(settings):
     experiment_name = settings['experiment_name']
-    seed = settings['seed']
-    model_savename = os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+str(seed)+"_model")
+    model_savename = os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_model")
     model = tf.keras.models.load_model(model_savename, compile=False)
     return model
