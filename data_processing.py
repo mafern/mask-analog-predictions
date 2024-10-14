@@ -11,7 +11,6 @@ FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
 PERIOD = 'monthly'
 
-
 def process_data(experiment_settings, overwrite_data=False):
     """
     description
@@ -37,9 +36,12 @@ def process_data(experiment_settings, overwrite_data=False):
     # for each of the split sets (analog, training, validation)
     for split_set in split.keys():
         # file to look for if preprocessing has been completed previously
-        processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle')
+        processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split_set+'.pickle')
         # file does not exist or overwrite has been requested
         if overwrite_data or not os.path.exists(processed_data_file):
+            # make directory
+            if not os.path.exists(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name)):
+                os.mkdir(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name))
             # list of models to use for the analog set, training, and validation sets
             if split_set == 'analog':
                 model_list = experiment_settings['analog_models']
@@ -133,7 +135,7 @@ def process_data(experiment_settings, overwrite_data=False):
                                                                           lon=current_data['target']['lon'].astype(FLOAT_TYPE),
                                                                           member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
             # save processed data in pickle format
-            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
+            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
                 pickle.dump(current_data, filename)
 
             # update dictionary to return
@@ -159,12 +161,20 @@ def neural_network_stack(dataset, settings):
     inputs = dataset['inputs'].fillna(0)
     target = dataset['target'].fillna(0)
 
+    # include trajectory for training (sliding window of time indices)
+    traj_inds = np.lib.stride_tricks.sliding_window_view(np.arange(target.time.size), settings['trajectory'])
+    traj_inds = xr.DataArray(data=traj_inds, dims=['time', 'trajectory'])
+    target = target.isel(time=traj_inds).transpose('time', 'member', 'lat', 'lon', 'trajectory')
+    target = target.drop('time').stack(sample=['time', 'member'])
+    # need to be consistent for inputs as well
+    traj_inds = np.lib.stride_tricks.sliding_window_view(np.arange(inputs.time.size), settings['trajectory'])
+    traj_inds = xr.DataArray(data=traj_inds, dims=['time', 'trajectory'])
+    inputs = inputs.isel(time=traj_inds).transpose('time', 'member', 'lat', 'lon', 'trajectory')
+    inputs = inputs.drop('time').stack(sample=['time', 'member']).isel(trajectory=0)
+
     # stack time and members as samples, convert to numpy array with correct shape
-    inputs = inputs.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
-    if settings['method'] == 'jamin':
-        target = target.stack(sample=("member", "time")).to_array().transpose("sample", "variable").to_numpy()
-    else:
-        target = target.stack(sample=("member", "time")).to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
+    inputs = inputs.to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
+    target = target.to_array().transpose("sample", "lat", "lon", "variable", "trajectory").to_numpy()
     
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target
