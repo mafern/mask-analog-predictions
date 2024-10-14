@@ -24,7 +24,6 @@ c_stalwart = '#105456'
 blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
 blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
 
-
 def get_settings(experiment_name):
     "helper to be consistent with existing code"
     experiments = Experiments().experiments
@@ -111,7 +110,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jamin', mask=False, output_period=False, roll_period=False, window=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jacob', mask=False, output_period=False, roll_period=False, window=1, trajectory=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, transfer_exp=None, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -124,7 +123,7 @@ class Experiments():
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
-                - method: which method to use, 'jamin' (input mse predicts region averaged target mse), 'jacob' (input mse predicts target mse), and 'martin' (input mse predicts target map, loss is mse)
+                - method: which method to use, 'jacob' (input mse predicts target mse) or 'martin' (input mse predicts target map, loss is mse)
                 - val_models: which models to use for the validation split (if None, use the same models as soi_models)
                 - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
                 - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
@@ -132,7 +131,8 @@ class Experiments():
                 - learning_rate: step size for the training
                 - output_period: either resample the data to a new period (pass a string such as "2M"), resample on the same period (pass None) or do nothing (pass False, default)
                 - roll_period: calculate rolling mean for the data (pass a positive integer for number of time steps to roll), or do nothing (pass False, default)
-                - window: calculate rolling mean for the target data only
+                - window: calculate rolling mean over this number of steps (default is no windowing)
+                - trajectory: number of time steps over which to match for training (default is 1, which is matching on input time only)
                 - resolutions: resample spatial grid of data, either to coarsest resolution amongst models (pass None, default), to a specified resolution (pass a list [lat_res, lon_res]), or do nothing (pass False)
                 - season: calculate a yearly season from the data (pass a list with entries [season_length, season_start]), or do nothing (pass False, default)
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
@@ -151,15 +151,21 @@ class Experiments():
                 - mask_l1: l1 regularization for the mask, default is 0 (off)
                 - mask_l2: l2 regularization for the mask, default is 0 (off)
                 - norm_weights: whether to normalize the mask weights, default is True
+                - transfer_exp: experiment name (string) from which to transfer learn (initializes mask, layers, or both, depending on training inputs)
                 - seed: random seed to use in the member selection and the network training
                 
         Returns a dictionary containing all of the requested experiment settings, including the processing steps (in a sensable order).
         """
         # check if the proposed experiment name already exists and inputs are sensible
         assert experiment_name not in self.keys, "experiment with that name already exists"
-        assert leadtime > 0, "leadtime should be positive for projections"
-        assert roll_period > 0 or roll_period is False, "roll_period should positive or False"
-        
+        assert leadtime > 0, "leadtime should be a positive integer"
+        assert roll_period > 0 or roll_period is False, "roll_period should be positive or False"
+        # if trajectory is greater than 1 (matching on input + previous times), leadtime must be 1
+        assert trajectory >= 1, "trajectory must be a positive integer"
+        if trajectory > 1:
+            print("*** using a trajectory > 1, enforcing a leadtime of 1")
+            leadtime = 1
+
         # check validation models
         if val_models is None:
             val_models = soi_models
@@ -189,7 +195,6 @@ class Experiments():
                                "smooth_space(experiment_settings['resolutions'])": resolutions,
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
-                               "regional_mean(experiment_settings['variable_list'])": method == 'jamin',
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(-experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
@@ -214,11 +219,6 @@ class Experiments():
         experiment_settings[experiment_name] = function_inputs
         # remove self (not needed) from dictionary
         experiment_settings[experiment_name].pop('self')
-        # set target shape based on the method
-        if method == 'jamin':
-            experiment_settings[experiment_name]['avg_target'] = True
-        else:
-            experiment_settings[experiment_name]['avg_target'] = False
         # now add the processing lists
         experiment_settings[experiment_name]["inputs_proc_steps"] = inputs_proc_steps
         experiment_settings[experiment_name]["target_proc_steps"] = target_proc_steps
@@ -264,7 +264,7 @@ class Experiments():
          validation_inputs, validation_target,
          lat, lon) = self.get_experiment_data(experiment_name, overwrite_data=overwrite_data)
         
-        # reshape for multiple variables, since tensorflow flatten wants it this way
+        # reshape for multiple variables, since tensorflow flatten wants it this way (sample, var, lat, lon)
         analog_inputs = np.transpose(analog_inputs, (0, 3, 1, 2))
         training_inputs = np.transpose(training_inputs, (0, 3, 1, 2))
         validation_inputs = np.transpose(validation_inputs, (0, 3, 1, 2))
@@ -332,15 +332,16 @@ class Experiments():
                 data_var_dict[var] = (["lat", "lon"], np.array(mask)[ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
-                coords=dict(lat=lat, lon=lon)
+                coords=dict(lat=lat.data, lon=lon.data)
             )
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
+
             data_var_dict = {}
             for ii, var in enumerate(vars):
                 data_var_dict[var] = (["lat", "lon"], np.array(raw_mask)[ii])
             mask = xr.Dataset(
                 data_vars=data_var_dict,
-                coords=dict(lat=lat, lon=lon)
+                coords=dict(lat=lat.data, lon=lon.data)
             )
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
         
