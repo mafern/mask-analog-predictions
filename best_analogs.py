@@ -20,7 +20,8 @@ PERIOD = 'monthly'
 # -------------------------------------------------------------------------------
 
 def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_analogs, prediction_dict=None,
-                return_average=True, global_mean=False, max_year=None, rank_alpha=None, soi_signature=None):
+                return_average=True, global_mean=False, max_year=None, rank_alpha=None, soi_signature=None,
+                leadtime=None):
     """
     get the best analogs for the given soi model/member
     """
@@ -34,10 +35,14 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         # get the soi savename corresponding to the requested soi_model, soi_member, and tether
         soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
     # get the indices for the selected soi
-    analog_indices = prediction_dict['analogs'][soi_signature]
+    analog_path = os.path.join(os.path.dirname(__file__), "saved_analogs", experiment_name, soi_signature+'.pickle')
+    with gzip.open(analog_path, 'rb') as file:
+        analog_indices = pickle.load(file)
+
     # weights and leadtime
     weights = np.cos(np.deg2rad(prediction_dict['target'].lat))
-    leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
+    if leadtime is None:
+        leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
 
     # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
     if "global" in soi_model or "regional" in soi_model or "mspecial" in soi_model:
@@ -166,7 +171,7 @@ class BestAnalogs():
         self.used_members = np.empty(0, dtype=int)
         self.used_models = np.empty(0, dtype=str)
         for split in ['training', 'validation']:
-            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name+'_'+split+'.pickle'), "rb") as filename:
+            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split+'.pickle'), "rb") as filename:
                 # just getting the models and members, so either inputs or target is sufficient
                 split_data = pickle.load(filename)
             # concatenate the training data used_models and used_members
@@ -218,16 +223,16 @@ class BestAnalogs():
             analogs.remove(analog_path+'/target.pickle')
             print('previously saved analogs:', *[np.sort(analogs)[ii].split('/')[-1][:-7] for ii in range(len(analogs))])
             for analog in analogs:
-                with gzip.open(analog, 'rb') as file:
-                    self.prediction_dict['analogs'][analog.split('/')[-1][:-7]] = pickle.load(file)
+                self.prediction_dict['analogs'][analog.split('/')[-1][:-7]] = {}
         except:
             print('no previouly saved analogs to load!')
 
 # -------------------------------------------------------------------------------
 
     def process_new_data(self, experiment_name, model_list, new_members=-1):
-        # n_members=-1 means return all the rest of the members from each model
+        """
         
+        """        
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(experiment_name)
         variables = experiment_settings['variable_list']
@@ -361,9 +366,8 @@ class BestAnalogs():
         mse = 0
         for var in list(weighted_soi.data_vars):
             # reshape analog and soi for faster computation (broadcasting)
-            # analogs = weighted_analogs.transpose('sample', 'lat', 'lon')[var].to_numpy()
             analogs = weighted_analogs[var].to_numpy()
-            soi = weighted_soi.expand_dims('placeholder', axis=1).transpose('sample', 'placeholder', 'lat', 'lon')[var].to_numpy()
+            soi = weighted_soi.expand_dims('placeholder').transpose('trend', 'placeholder', 'lat', 'lon')[var].to_numpy()
             # calculate mse and sort by this
             mse += np.mean(bn.nanmean(bn.nanmean((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
         best_samples = np.argsort(mse)
@@ -380,7 +384,6 @@ class BestAnalogs():
                 best_input_models=(["time", "analogs"], weighted_analogs.model[best_samples].data.reshape(1, -1))
             ),
             coords=dict(
-                # soi_time=("time", [pd.to_datetime(str(weighted_soi.time[-1].dt.strftime("%Y-%m-%d").to_numpy()))])
                 soi_time=("time", list(weighted_soi.time[-1:].data))
                     )
         )
@@ -402,8 +405,7 @@ class BestAnalogs():
 
         # use a threshold for the mask to remove low relevance regions
         mask_object = self.mask_object
-        # default soi name (can be updated if using global 1s map, or regional 1s map)
-        self.soi_model_name = soi_model
+        
         # remove mask values below some quantile threshhold
         if quant is not None:
             quant_mask = self.mask_object.pr.quantile(quant)
@@ -411,13 +413,11 @@ class BestAnalogs():
         # use a global 1s mask or a regional 1s mask
         if mask_type == 'global':
             mask_object = mask_object.where(mask_object < -9999, 1)
-            self.soi_model_name = soi_model+'_global'
         elif mask_type == 'regional':
             mask_object = ((mask_object.lat <= self.prediction_dict['target'].lat.max())
                            * (mask_object.lat >= self.prediction_dict['target'].lat.min())
                            * (mask_object.lon <= self.prediction_dict['target'].lon.max())
                            * (mask_object.lon >= self.prediction_dict['target'].lon.min())).astype(int)
-            self.soi_model_name = soi_model+'_regional'
         elif mask_type == 'mspecial':
             # keep the weights outside the target the same, but replace values inside the target
             # region with the maximum value across the whole mask
@@ -427,8 +427,7 @@ class BestAnalogs():
                         * (mask_object.lon <= self.prediction_dict['target'].lon.max())
                         * (mask_object.lon >= self.prediction_dict['target'].lon.min()))
             mask_object = mask_object.where(~bool_map, max_mask_weight)
-            self.soi_model_name = soi_model+'_mspecial'
-
+        
         # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
         # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
         try:
@@ -453,6 +452,10 @@ class BestAnalogs():
                 good_inds = np.concatenate([good_inds, cinds])
         good_inds_xr = xr.DataArray(data=good_inds[1:], dims=['sample', 'trend'])
         weighted_analogs = weighted_analogs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
+
+        # do the same for soi
+        good_inds_xr = xr.DataArray(data=np.lib.stride_tricks.sliding_window_view(np.arange(soi_inputs.sample.size), tether), dims=['sample', 'trend'])
+        soi_inputs = soi_inputs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
         
         # weights for tethering
         # weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
@@ -482,8 +485,6 @@ class BestAnalogs():
         with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=3) as filename:
             print('saving to:', os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'))
             pickle.dump(soi_ds, filename)
-        # add it to the dictionary
-        self.prediction_dict['analogs'][savename] = soi_ds
                 
 # -------------------------------------------------------------------------------
     
@@ -492,8 +493,8 @@ class BestAnalogs():
         """
         Create an iterable for a parallel approach to metric assessment
         """
-        for jj in range(tether-1, weighted_soi.time.size):
-            yield weighted_soi.isel(sample=np.arange(jj-tether+1, jj+1)), weighted_analogs, weights
+        for jj in range(weighted_soi.dims['sample']):
+            yield weighted_soi.isel(sample=jj), weighted_analogs, weights
 
 # -------------------------------------------------------------------------------
 
