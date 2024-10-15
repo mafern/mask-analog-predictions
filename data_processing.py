@@ -52,8 +52,17 @@ def process_data(experiment_settings, overwrite_data=False):
             
             # load the appropriate ensemble members for the requested models/variables
             input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], PERIOD, split[split_set], seed, model_member_dict)
-            # deepcopy a version for the outputs
-            output_raw = deepcopy(input_raw)
+            if np.isin(experiment_settings['target_var'][0], experiment_settings['variable_list']):
+                # deepcopy a version for the outputs
+                output_raw = deepcopy(input_raw)
+                # variables that should be removed (non-target variables)
+                remove_vars = np.setdiff1d(experiment_settings['variable_list'], experiment_settings['target_var'])
+                # remove them
+                for drop in remove_vars:
+                    output_raw.data_dictionary.pop(drop)
+            # target variable is not one of the input variables
+            else:
+                output_raw = _dp.DataProcessing(model_list, experiment_settings['target_var'], PERIOD, split[split_set], seed, model_member_dict)
 
             # initialize dictionary for this split set
             current_data = {"inputs": {}, "target": {}, "lat": {}, "lon": {}, "land_ocean_mask": {}}
@@ -84,42 +93,34 @@ def process_data(experiment_settings, overwrite_data=False):
                     repeat_model = [model] * split[split_set]
                     # add the member indices as a coordinate
                     input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(used_members))
-                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(member=(used_members))
                     # and add the models as a coordinate
                     input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
-                    output_raw.data_dictionary[var][model] = output_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
-                    
                 # now flatten over models
                 current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()],
                                                         dim="member", coords="minimal")
-                current_data["target"][var] = xr.concat([output_raw.data_dictionary[var][model] for model in output_raw.data_dictionary[var].keys()],
-                                                        dim="member", coords="minimal")
-                
-            # flatten variables into single dataset (if there is more than one variable)
+            # flatten input variables into single dataset (if there is more than one variable)
             if len(experiment_settings["variable_list"]) > 1:
-                shape_list = [current_data["inputs"][var][var].shape[2:] for var in current_data["inputs"].keys()]
-                # check resolutions of all variables
-                if len(set(shape_list)) > 1:
-                    # multiple variables with different resolutions, rename for merging
-                    current_data["inputs"] = xr.merge([current_data["inputs"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["inputs"].keys()], join='inner')
-                    current_data["target"] = xr.merge([current_data["target"][var].rename({"lat": "lat_"+var, "lon": "lon_"+var}) for var in current_data["target"].keys()], join='inner')
-                    # get latitude and longitude for each variable
-                    current_data['lat'] = {var: current_data['inputs']['lat_'+var].to_numpy().astype(FLOAT_TYPE) for var in current_data["inputs"].keys()}
-                    current_data['lon'] = {var: current_data['inputs']['lon_'+var].to_numpy().astype(FLOAT_TYPE) for var in current_data["inputs"].keys()}
-                else:
-                    # multiple variables, but same resolution for all
-                    current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
-                    current_data["target"] = xr.merge([current_data["target"][var] for var in current_data["target"].keys()], join='inner')
-                    # get latitude and longitude
-                    current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
-                    current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
-            # if there is only a single variable, continue on
-            else:
-                current_data["inputs"] = current_data["inputs"][var]
-                current_data["target"] = current_data["target"][var]    
+                # multiple variables, but same resolution for all
+                current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
                 # get latitude and longitude
                 current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
                 current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
+            # if there is only a single variable, continue on
+            else:
+                current_data["inputs"] = current_data["inputs"][var]
+                # get latitude and longitude
+                current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
+                current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
+
+            # repeat for output
+            target_var = experiment_settings['target_var'][0]
+            for model in model_list:
+                output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(member=(used_members))
+                output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(model=('member', repeat_model))
+            current_data["target"][target_var] = xr.concat([output_raw.data_dictionary[target_var][model] for model in output_raw.data_dictionary[target_var].keys()],
+                                                            dim="member", coords="minimal")
+            # load in the target dataset
+            current_data["target"] = current_data["target"][experiment_settings['target_var'][0]] 
 
             # if a land or ocean mask was used, carry that over
             if experiment_settings['mask']:

@@ -110,7 +110,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jacob', mask=False, output_period=False, roll_period=False, window=1, trajectory=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, transfer_exp=None, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jacob', mask=False, output_period=False, roll_period=False, window=1, trajectory=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, transfer_exp=None, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -125,6 +125,7 @@ class Experiments():
             OPTIONAL INPUTS
                 - method: which method to use, 'jacob' (input mse predicts target mse) or 'martin' (input mse predicts target map, loss is mse)
                 - val_models: which models to use for the validation split (if None, use the same models as soi_models)
+                - target_var: variable to predict (if None, use the first entry of the variable_list)
                 - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
                 - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
                 - prediction_activation: activation function used for the network
@@ -165,7 +166,9 @@ class Experiments():
         if trajectory > 1:
             print("*** using a trajectory > 1, enforcing a leadtime of 1")
             leadtime = 1
-
+        # get the target variable if one has not been passed
+        if target_var is None:
+            target_var = [variable_list[0],]
         # check validation models
         if val_models is None:
             val_models = soi_models
