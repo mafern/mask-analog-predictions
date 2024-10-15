@@ -97,7 +97,7 @@ def process_data(experiment_settings, overwrite_data=False):
                 
             # flatten variables into single dataset (if there is more than one variable)
             if len(experiment_settings["variable_list"]) > 1:
-                shape_list = [current_data["inputs"][var].shape[2:] for var in current_data["inputs"].keys()]
+                shape_list = [current_data["inputs"][var][var].shape[2:] for var in current_data["inputs"].keys()]
                 # check resolutions of all variables
                 if len(set(shape_list)) > 1:
                     # multiple variables with different resolutions, rename for merging

@@ -101,8 +101,6 @@ class DataProcessing():
                     # generate randomly seeded choice object and randomly select members
                     rng_seed = np.random.default_rng(seed)
                     used_members = np.sort(rng_seed.choice(self.model_member_dict[model], n_members, replace=False, shuffle=False))
-                    # update model_member_dictionary to remove these members for later splits
-                    self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
                 # select those files
                 file_list = file_list[used_members]
 
@@ -136,6 +134,9 @@ class DataProcessing():
                 ensemble_list = ensemble_list.convert_calendar("noleap")
                 data_dictionary[variable][model] = ensemble_list.resample(time=self.period).mean()
                 print('successfully loaded', ii+1, 'ensemble members from', file_path)
+
+        # update model_member_dictionary to remove these members for later splits
+        self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
 
         return data_dictionary
     
