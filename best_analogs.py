@@ -45,8 +45,8 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
 
     # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
-    if "global" in soi_model or "regional" in soi_model or "mspecial" in soi_model:
-        # return the experiment name without the "global", "regional", or "mspecial" suffix
+    if "global" in soi_model or "regional" in soi_model or "addregional" in soi_model:
+        # return the experiment name without the "global", "regional", or "addregional" suffix
         suffix_ind = soi_model[::-1].find('_')
         soi_model = soi_model[:-(suffix_ind+1)]
     soi_index = np.where((prediction_dict['target'].model == soi_model) &
@@ -82,13 +82,16 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         best_years = (prediction_dict['target']['time.year'] == best_years)
         best_samples = best_models * best_members * best_years
 
+
     # get the prediction -- first reorganize the coordinates for ease of use
     targets = prediction_dict['target'].drop('sample').assign_coords({'member': ("sample", prediction_dict['target'].member.data), 'analog_time': ("sample", prediction_dict['target']['time.year'].data)})
     for ii in range(analog_indices.time.size):
+        best_inds, order = np.where(best_samples.isel(time=ii))
+        best_inds = best_inds[np.argsort(order)]
         if ii == 0:
-            soi_prediction = targets.isel(sample=np.where(best_samples.isel(time=ii))[0]).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
+            soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
         else:
-            soi_prediction = xr.concat([soi_prediction, targets.isel(sample=np.where(best_samples.isel(time=ii))[0]).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
+            soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
     # now convert to global mean if requested (predictions)
     if global_mean:
         soi_prediction = soi_prediction.weighted(weights).mean(("lon", "lat"), skipna=True)
@@ -113,8 +116,8 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
 def get_full_analog_range(experiment_name, prediction_dict, soi_model, soi_member, variable, global_mean=False, minmax=True):
     leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
     # get the soi index and the full range of analog predictions
-    if "global" in soi_model or "regional" in soi_model or "mspecial" in soi_model:
-        # return the experiment name without the "global", "regional", or "mspecial" suffix
+    if "global" in soi_model or "regional" in soi_model or "addregional" in soi_model:
+        # return the experiment name without the "global", "regional", or "addregional" suffix
         suffix_ind = soi_model[::-1].find('_')
         soi_model = soi_model[:-(suffix_ind+1)]
     soi_index = np.where((prediction_dict['target'].model == soi_model) * 
@@ -236,6 +239,7 @@ class BestAnalogs():
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(experiment_name)
         variables = experiment_settings['variable_list']
+        target_var = experiment_settings['target_var']
         # remove some of the processing steps that are not necessary for the prediction part
         # (sync_time not needed, shift_inout_time unnecessarily removes dates, regional_mean can be done later)
         remove_steps = ["sync_time(experiment_settings['time_range'])",
@@ -276,7 +280,19 @@ class BestAnalogs():
             for var in variables:
                 # make the resolution the same as the previously processed datasets
                 input_raw.attr_dictionary[var]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
-            output_raw = copy.deepcopy(input_raw)
+            # get the targets
+            if np.isin(target_var[0], variables):
+                # deepcopy a version for the outputs
+                output_raw = copy.deepcopy(input_raw)
+                # variables that should be removed (non-target variables)
+                remove_vars = np.setdiff1d(variables, target_var)
+                # remove them
+                for drop in remove_vars:
+                    output_raw.data_dictionary.pop(drop)
+            # target variable is not one of the input variables
+            else:
+                output_raw = _dp.DataProcessing([model], target_var, PERIOD, list(model_new_members), experiment_settings['seed'])
+                output_raw.attr_dictionary[target_var[0]]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
 
             # run some processing steps for the inputs
             print('#################################################################')
@@ -299,10 +315,10 @@ class BestAnalogs():
             # flatten variables into single dataset (if there is more than one variable)
             if len(variables) > 1:
                 input_raw = xr.merge([input_raw.data_dictionary[var][model] for var in input_raw.data_dictionary.keys()], join='inner')
-                output_raw = xr.merge([output_raw.data_dictionary[var][model] for var in output_raw.data_dictionary.keys()], join='inner')
             else:
                 input_raw = input_raw.data_dictionary[variables[0]][model]
-                output_raw = output_raw.data_dictionary[variables[0]][model]
+            # now do the same for target
+            output_raw = output_raw.data_dictionary[target_var[0]][model]
 
             # make a list of the model name repeating for the number of members
             repeat_model = [model] * model_new_members.size
@@ -334,7 +350,7 @@ class BestAnalogs():
         # get rid of samples that are all nans
         good_inds = np.where(~np.isnan(inputs_raw[variables[0]].mean(['lat', 'lon'], skipna=True)))[0]
         inputs_raw = inputs_raw.isel(sample=good_inds)
-        good_inds = np.where(~np.isnan(outputs_raw[variables[0]].mean(['lat', 'lon'], skipna=True)))[0]
+        good_inds = np.where(~np.isnan(outputs_raw[target_var[0]].mean(['lat', 'lon'], skipna=True)))[0]
         outputs_raw = outputs_raw.isel(sample=good_inds)
 
         try:
@@ -418,15 +434,18 @@ class BestAnalogs():
                            * (mask_object.lat >= self.prediction_dict['target'].lat.min())
                            * (mask_object.lon <= self.prediction_dict['target'].lon.max())
                            * (mask_object.lon >= self.prediction_dict['target'].lon.min())).astype(int)
-        elif mask_type == 'mspecial':
-            # keep the weights outside the target the same, but replace values inside the target
-            # region with the maximum value across the whole mask
-            max_mask_weight = mask_object.max()
-            bool_map = ((mask_object.lat <= self.prediction_dict['target'].lat.max())
-                        * (mask_object.lat >= self.prediction_dict['target'].lat.min())
-                        * (mask_object.lon <= self.prediction_dict['target'].lon.max())
-                        * (mask_object.lon >= self.prediction_dict['target'].lon.min()))
-            mask_object = mask_object.where(~bool_map, max_mask_weight)
+        elif mask_type == 'addregional':
+            # match based on both the learned mask and a regional mask
+            vars = list(self.prediction_dict['inputs'].data_vars)
+            regional_mask = ((mask_object.lat <= self.prediction_dict['target'].lat.max())
+                             * (mask_object.lat >= self.prediction_dict['target'].lat.min())
+                             * (mask_object.lon <= self.prediction_dict['target'].lon.max())
+                             * (mask_object.lon >= self.prediction_dict['target'].lon.min()))
+            max_mask_weight = 1 / np.sum(regional_mask)
+            regional_mask = regional_mask.where(~regional_mask, max_mask_weight)
+            mask_object = xr.merge([mask_object] + [regional_mask.to_dataset(name=var+'_regional') for var in vars])
+            regional_copy = self.prediction_dict['inputs'].copy()
+            self.prediction_dict['inputs'] = xr.merge([self.prediction_dict['inputs'], regional_copy.rename_vars({var: var+'_regional' for var in vars})])
         
         # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
         # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
