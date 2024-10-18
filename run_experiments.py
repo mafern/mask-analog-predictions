@@ -163,7 +163,7 @@ class Experiments():
         assert roll_period > 0 or roll_period is False, "roll_period should be positive or False"
         # if trajectory is greater than 1 (matching on input + previous times), leadtime must be 1
         assert trajectory >= 1, "trajectory must be a positive integer"
-        if trajectory > 1:
+        if trajectory > 1 and leadtime != 1:
             print("*** using a trajectory > 1, enforcing a leadtime of 1")
             leadtime = 1
         # get the target variable if one has not been passed
@@ -333,20 +333,12 @@ class Experiments():
             data_var_dict = {}
             for ii, var in enumerate(vars):
                 data_var_dict[var] = (["lat", "lon"], np.array(mask)[ii])
+
             mask = xr.Dataset(
                 data_vars=data_var_dict,
                 coords=dict(lat=lat.data, lon=lon.data)
             )
             mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
-
-            data_var_dict = {}
-            for ii, var in enumerate(vars):
-                data_var_dict[var] = (["lat", "lon"], np.array(raw_mask)[ii])
-            mask = xr.Dataset(
-                data_vars=data_var_dict,
-                coords=dict(lat=lat.data, lon=lon.data)
-            )
-            mask.to_netcdf(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_raw_mask.nc'))
         
         # no need to get data, build/train model, or make/save mask -- just load the existing mask
         else:
