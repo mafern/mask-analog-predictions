@@ -187,7 +187,7 @@ class Experiments():
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
-                               "shift_inout_time(-experiment_settings['leadtime'], experiment_settings['window'])": leadtime,
+                               "shift_inout_time(-experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
@@ -201,7 +201,7 @@ class Experiments():
                                "remove_seasonality()": remove_seasonality,
                                "rolling_time(-experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
-                               "shift_inout_time(experiment_settings['leadtime'], experiment_settings['window'])": leadtime,
+                               "shift_inout_time(experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
