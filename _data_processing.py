@@ -126,7 +126,6 @@ class DataProcessing():
                         np.max([np.diff(ens_member.lat[:2])[0], self.attr_dictionary[variable]["res"][0]]), 
                         np.max([np.diff(ens_member.lon[:2])[0], self.attr_dictionary[variable]["res"][1]])
                     ]
-
                     ens_member.close()
 
                 # add model to the dictionary
@@ -135,8 +134,9 @@ class DataProcessing():
                 data_dictionary[variable][model] = ensemble_list.resample(time=self.period).mean()
                 print('successfully loaded', ii+1, 'ensemble members from', file_path)
 
-        # update model_member_dictionary to remove these members for later splits
-        self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
+        if type(n_members) == int:
+            # update model_member_dictionary to remove these members for later splits
+            self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
 
         return data_dictionary
     
