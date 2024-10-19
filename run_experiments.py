@@ -110,7 +110,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, method='jacob', mask=False, output_period=False, roll_period=False, window=1, trajectory=1, resolutions=None, season=False, time_range=None, norm_data=True, baseline=False, remove_trend=False, remove_seasonality=False, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, norm_weights=True, transfer_exp=None, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=None, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, method='jacob', mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -123,24 +123,22 @@ class Experiments():
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
-                - method: which method to use, 'jacob' (input mse predicts target mse) or 'martin' (input mse predicts target map, loss is mse)
                 - val_models: which models to use for the validation split (if None, use the same models as soi_models)
                 - target_var: variable to predict (if None, use the first entry of the variable_list)
-                - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
-                - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
-                - prediction_activation: activation function used for the network
-                - learning_rate: step size for the training
-                - output_period: either resample the data to a new period (pass a string such as "2M"), resample on the same period (pass None) or do nothing (pass False, default)
-                - roll_period: calculate rolling mean for the data (pass a positive integer for number of time steps to roll), or do nothing (pass False, default)
                 - window: calculate rolling mean over this number of steps (default is no windowing)
                 - trajectory: number of time steps over which to match for training (default is 1, which is matching on input time only)
                 - resolutions: resample spatial grid of data, either to coarsest resolution amongst models (pass None, default), to a specified resolution (pass a list [lat_res, lon_res]), or do nothing (pass False)
-                - season: calculate a yearly season from the data (pass a list with entries [season_length, season_start]), or do nothing (pass False, default)
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
                 - norm_data: whether to normalize the data by its mean and std (default is True)
                 - baseline: normalize the datasets by a baseline period (pass a list of a start and end year for the baseline, e.g. [1951, 1980]) or do nothing (pass False, default)
                 - remove_trend: whether to remove the trend via the ensemble mean (pass True) or do nothing (pass False, default)
-                - remove_seasonality: whether to remove the seasonal cycle (pass True), or do nothing (pass False, default)
+                - norm_weights: whether to normalize the mask weights, default is True
+                - transfer_exp: experiment name (string) from which to transfer learn (initializes mask, layers, or both, depending on training inputs)
+                - method: which method to use, 'jacob' (input mse predicts target mse) or 'martin' (input mse predicts target map, loss is mse)
+                - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
+                - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
+                - prediction_activation: activation function used for the network
+                - learning_rate: step size for the training
                 - loss: loss function to use in training, default is 'mse'
                 - patience: number of steps (epochs) to take without improving loss before early stopping, default is 50
                 - min_delta: minimum change in the loss to qualify as an improvement, default is 0.0005
@@ -151,8 +149,6 @@ class Experiments():
                 - mask_init: initial weights for the mask, default is 'ones'
                 - mask_l1: l1 regularization for the mask, default is 0 (off)
                 - mask_l2: l2 regularization for the mask, default is 0 (off)
-                - norm_weights: whether to normalize the mask weights, default is True
-                - transfer_exp: experiment name (string) from which to transfer learn (initializes mask, layers, or both, depending on training inputs)
                 - seed: random seed to use in the member selection and the network training
                 
         Returns a dictionary containing all of the requested experiment settings, including the processing steps (in a sensable order).
@@ -160,7 +156,6 @@ class Experiments():
         # check if the proposed experiment name already exists and inputs are sensible
         assert experiment_name not in self.keys, "experiment with that name already exists"
         assert leadtime > 0, "leadtime should be a positive integer"
-        assert roll_period > 0 or roll_period is False, "roll_period should be positive or False"
         # if trajectory is greater than 1 (matching on input + previous times), leadtime must be 1
         assert trajectory >= 1, "trajectory must be a positive integer"
         if trajectory > 1 and leadtime != 1:
@@ -178,28 +173,24 @@ class Experiments():
         # get locals (i.e. all of the inputs to make_exp_dictionary) before assigning anything here
         function_inputs = locals()
         
-        inputs_process_dict = {"select_season(season=experiment_settings['season'])": season,
-                               "smooth_time(period=experiment_settings['output_period'])": output_period,
+        inputs_process_dict = {"smooth_time(period='1Y')": '1Y',
                                "sync_time(experiment_settings['time_range'])": time_range,
                                "mask_data(experiment_settings['mask'])": mask,
                                "smooth_space(experiment_settings['resolutions'])": resolutions,
+
                                "baseline_norm(experiment_settings['baseline'])": baseline,
-                               "remove_seasonality()": remove_seasonality,
-                               "rolling_time(experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
                                "shift_inout_time(-experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
-        target_process_dict = {"select_season(season=experiment_settings['season'])": season,
-                               "smooth_time(period=experiment_settings['output_period'])": output_period,
+        target_process_dict = {"smooth_time(period='1Y')": '1Y',
                                "sync_time(experiment_settings['time_range'])": time_range,
                                "mask_data(experiment_settings['mask'])": mask,
                                "smooth_space(experiment_settings['resolutions'])": resolutions,
+
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
-                               "remove_seasonality()": remove_seasonality,
-                               "rolling_time(-experiment_settings['roll_period'])": roll_period,
                                "window_time(experiment_settings['window'])": window,
                                "shift_inout_time(experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
@@ -501,20 +492,16 @@ class Experiments():
     @property
     def list_variables(self):
         resolution_dictionary = {
-            "daily": {},
-            "monthly": {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0]},
-            "yearly": {'BEST-YEARLY': [1.0, 1.0], 'ERA5-YEARLY': [0.25, 0.25], 'GISTEMP': [2.5, 2.5], 'UDEL': [0.5, 0.5]}}
+            'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0],
+            }
 
-        for cadence in ['daily', 'monthly', 'yearly']:
-            models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence+'/*'))
-            models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
-            # initialize list
-            allvars = []
-            print('----------', cadence, '----------')
-            for model in models:
-                model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence, model, '*/'))
-                model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-                n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+cadence, model, model_vars[i], '*'))) for i in range(len(model_vars))]
-                print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[cadence][model])
+        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/*'))
+        models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
+        # initialize list
+        for model in models:
+            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, '*/'))
+            model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
+            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
+            print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[model])
             
         

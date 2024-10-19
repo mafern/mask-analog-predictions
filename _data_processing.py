@@ -20,15 +20,10 @@ class DataProcessing():
     outputs:
         - 
     """
-    def __init__(self, model_list, variable_list, period, n_members, seed, model_member_dict=None):
+    def __init__(self, model_list, variable_list, n_members, seed, model_member_dict=None):
         ""
         
         # save some global variables that will be useful
-        self.period_dictionary = {"D": 0, "M": 1, "Y": 2}
-        self.month_dictionary = {1: "jan", 2: "feb", 3: "mar",
-                                 4: "apr", 5: "may", 6: "jun",
-                                 7: "jul", 8: "aug", 9: "sep",
-                                 10: "oct", 11: "nov", 12: "dec"}
         self.user_regions = json.load(open(os.path.join(os.path.dirname(__file__), 'regions.json'), 'r'))
         self.regionmask_regions = ['regionmask.defined_regions.ar6.all[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.countries_10[box_or_regions]',
@@ -37,19 +32,16 @@ class DataProcessing():
                               'regionmask.defined_regions.srex[box_or_regions]',
                               'regionmask.defined_regions.natural_earth_v5_0_0.land_10[box_or_regions]'
                              ]
-        # save some global variables based on the experiment
-        self.period = period[0].upper()
-        self.period_long = period
         self.global_map = True
 
         # save model_member_dict
         self.model_member_dict = deepcopy(model_member_dict)
 
         # load the data from the requested models and variables
-        self.data_dictionary = self.load_data(model_list, variable_list, period, n_members, seed)
+        self.data_dictionary = self.load_data(model_list, variable_list, n_members, seed)
  
 
-    def load_data(self, model_list, variable_list, period, n_members, seed):
+    def load_data(self, model_list, variable_list, n_members, seed):
         """
         load files for models in model_list for the variables in variable_list
         data needs to be stored with the directory structure: data/variable_name/model_name/files
@@ -58,7 +50,6 @@ class DataProcessing():
         inputs:
             - model_list: a list of model names, e.g. ['CESM2', 'MPI',]
             - variable_list: a list variable names, e.g. ['ts', 'pr',]
-            - period: the sampling period of the model; 'monthly' or 'yearly' or 'daily'
             should agree with the folder structure within the data directory.
             - n_members: number of ensemble members to use.
             - seed: random seed for selecting ensemble members
@@ -85,7 +76,7 @@ class DataProcessing():
                     assert np.size(self.model_member_dict[model]) >= n_members, ["more members requested than available. requested: " + str(n_members) + ", available: " + str(np.size(self.model_member_dict[model]))]
                 
                 # file path for this variable and model
-                file_path = os.path.join(os.path.dirname(__file__), 'raw_data', period, model, variable)
+                file_path = os.path.join(os.path.dirname(__file__), 'raw_data/monthly/', model, variable)
                 # check that path exists, if not print warning and continue
                 if not os.path.exists(file_path):
                     print('directory:', file_path, 'does not exist')
@@ -133,7 +124,7 @@ class DataProcessing():
                 # add model to the dictionary
                 # resample step is to align data types and should not change anything meaningful
                 ensemble_list = ensemble_list.convert_calendar("noleap")
-                data_dictionary[variable][model] = ensemble_list.resample(time=self.period).mean()
+                data_dictionary[variable][model] = ensemble_list.resample(time='1M').mean()
                 print('successfully loaded', ii+1, 'ensemble members from', file_path)
 
         if type(n_members) == int:
@@ -142,137 +133,23 @@ class DataProcessing():
 
         return data_dictionary
     
-    
     # -------------------------------------------------------------------------------
     # --------------------------- temporal functions --------------------------------
     # -------------------------------------------------------------------------------
-    # ---- select_season, smooth_time, rolling_time, sync_time, shift_inout_time ----
+    # ------------------- smooth_time, sync_time, shift_inout_time ------------------
     
-    
-    def select_season(self, season):
+    def smooth_time(self):
         """
-        select a yearly season from the data.
-        data must be monthly.
-        
-        inputs:
-            - season: a list with entries [season_length, season_start], with season_length the number
-            of months to include (int > 0), and season_start the first month of the season (0 < int < 13)
-        outputs:
-            - data_dictionary with requested seasonal time steps
+        smooth time to yearly for data.
         """
-        assert season[0] > 0, "season length must be a non-zero positive integer"
-        assert season[1] > 0 and season[1] < 13, "season start must be an integer in the range [1, 12]"
-        print('selecting season starting in', self.month_dictionary[season[1]], 'and running for', season[0], 'months')
+        print("downsampling dataset to yearly")
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                # get rolling seasons of given length
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=season[0]).mean().dropna("time", how='all')
-                # then select only the seasons requested by season_start
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].sel(time=self.data_dictionary[var][model].time.dt.month == season[1])
-            
-        self.period = "Y"
-        print('season selected, now', self.data_dictionary[var][model].time.size, 'time steps')
-    
-    # -------------------------------------------------------------------------------
-    
-    def smooth_time(self, period=None):
-        """
-        smooth time by up-sampling, down-sampling, or resampling on same period, for all data.
+                self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time='1Y').mean()
         
-        inputs:
-            - period: a string with the desired time step size, e.g. "2M" for 2 months
-            (valid options are "Y", "M", "D").
-            if none given, retain current time step.
-        outputs:
-            - smoothed data_dictionary containing all datasets.
-        """
-        # determine if we are resampling, down-sampling, or up-sampling
-        if period is None:
-            sampling = "resampling"
-        else:
-            # upper-case and append a leading 1 if no leading integer
-            if len(period) == 1:
-                period = str(1)+period.upper()
-            if len(self.period) == 1:
-                self.period = str(1)+self.period
-                
-            # period type: D, M, or Y
-            current_period_type = self.period_dictionary[self.period[-1]]
-            requested_period_type = self.period_dictionary[period[-1]]
-            
-            # several cases -- make sure to get the correct one
-            # if current period type is less (e.g. M -> Y), down-sampling
-            if requested_period_type > current_period_type:
-                sampling = "down-sampling"
-            # if current period type is greater (e.g. from Y -> M), then up-sampling
-            elif requested_period_type < current_period_type:
-                sampling = "up-sampling"
-            # finally, if same period type, use leading integer to determine up- or down-sampling
-            else:
-                # requested period is greater than current period
-                if int(self.period[:-1]) < int(period[:-1]):
-                    sampling = "down-sampling"
-                # requested period is less than current period
-                elif int(self.period[:-1]) > int(period[:-1]):
-                    sampling = "up-sampling"
-                # requested period is the same as current period
-                else:
-                    sampling = "resampling"
-                  
-        if sampling == "down-sampling":
-            print(sampling, "dataset from", self.period, "to", period)
-            # for each variable in the dataset
-            for var in self.data_dictionary.keys():
-                # for each model (get down to the xarray level from the dictionary)
-                for model in self.data_dictionary[var].keys():
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=period).mean()
-        elif sampling == "up-sampling":
-            print(sampling, "dataset from", self.period, "to", period)
-            for var in self.data_dictionary.keys():
-                for model in self.data_dictionary[var].keys():
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=period).interpolate(kind='linear')
-                    # OTHER INTERPOLATION OPTIONS: "nearest", "zero", "slinear", "quadratic", "cubic", "polynomial"
-        else: # just resampling on the same period
-            print(sampling, "dataset")
-            for var in self.data_dictionary.keys():
-                for model in self.data_dictionary[var].keys():
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time=self.period).mean()
-            
-        # update self.period to new period
-        self.period = period
-        print('time period is now', self.period, 'with', self.data_dictionary[var][model].time.size, 'time steps')
-    
-    # -------------------------------------------------------------------------------
-    
-    def rolling_time(self, roll_period):
-        """
-        recast data as rolling averages over roll_period of the current time steps.
-        
-        inputs:
-            - roll_period: number of current time steps to average over.
-            can be positive or negative.
-        outputs:
-            - data_dictionary with rolling averaged time steps
-        """
-        assert roll_period != 0, "rolling average cannot be taken over 0 periods, use positive or negative integer"
-        print('applying rolling average over', roll_period, self.period, 'periods')
-        # for each variable in the dataset
-        for var in self.data_dictionary.keys():
-            # for each model (get down to the xarray level from the dictionary)
-            for model in self.data_dictionary[var].keys():
-                # rolling average over roll_period for the current time period of the data
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=abs(roll_period), center=False).mean().dropna("time", how="all")
-                if roll_period < 0:
-                    # shift time coordinates
-                    new_times = xr.CFTimeIndex(self.data_dictionary[var][model].time.values).shift(n=roll_period+1, freq=self.period)
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=new_times)
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=np.arange(abs(roll_period)-1))
-                else:
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].drop_isel(time=-(np.arange(abs(roll_period-1))+1))
-
-        print('rolling average applied, now', self.data_dictionary[var][model].time.size, 'time steps')
+        print('time period now contains', self.data_dictionary[var][model].time.size, 'time steps')
 
     # -------------------------------------------------------------------------------
     
@@ -285,8 +162,8 @@ class DataProcessing():
         outputs:
             - data_dictionary with rolling averaged time steps
         """
-        assert window != 0, "window cannot be over 0 periods, use positive integer"
-        print('applying window over', window, self.period, 'periods')
+        assert window > 0, "window be a positive integer"
+        print('applying window over', window, 'periods')
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
@@ -360,7 +237,6 @@ class DataProcessing():
     # ---------------------------- spatial functions --------------------------------
     # -------------------------------------------------------------------------------
     # --------------------- smooth_space, mask_data, get_region ---------------------
-
                 
     def smooth_space(self, resolutions=None):
         """
@@ -417,7 +293,7 @@ class DataProcessing():
                 # try loading model specific mask first
                 try:
                     # load map for this model
-                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data', self.period_long, model, mask+'mask.nc'))
+                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/', model, mask+'mask.nc'))
                     # if the current resolution is different from default (does not match saved mask)
                     if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
                         # adjust the resolution of the mask to be the same as the model and variable
@@ -522,38 +398,7 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     # ---------------------------- data manipulation --------------------------------
     # -------------------------------------------------------------------------------
-    # -- remove_seasonality, remove_trend, norm_data, regional_mean, baseline_norm --
-
-
-    def remove_seasonality(self, seasonality_dictionary=False):
-        """
-        remove seasonality (monthly) from the data.
-        
-        inputs:
-            - seasonality_dictionary: boolean determining if the calculated seasonalities should be
-            retained in a separate dictionary.
-        outputs:
-            - data_dictionary with the seasonality removed from each dataset.
-        """
-        print('removing seasonality from all datasets')
-        if seasonality_dictionary:
-            self.seasonality_dictionary = {}
-        # for each variable in the dataset
-        for var in self.data_dictionary.keys():
-            if seasonality_dictionary: self.seasonality_dictionary[var] = {}
-            # for each model (get down to the xarray level from the dictionary)
-            for model in self.data_dictionary[var].keys():
-                # calculate the seasonality as the monthly average
-                seasonality = self.data_dictionary[var][model].groupby('time.month').mean("time")
-                
-                if seasonality_dictionary:
-                    # if requested, save the seasonal signal in a separate dictionary
-                    self.seasonality_dictionary[var][model] = seasonality
-                    
-                # and remove it from the dataset
-                self.data_dictionary[var][model] = (self.data_dictionary[var][model].groupby('time.month') - seasonality).drop("month")
-
-    # -------------------------------------------------------------------------------
+    # ------------------- remove_trend, norm_data, baseline_norm --------------------
 
     def remove_trend(self, fit=None, trend_dictionary=False):
         """
@@ -578,16 +423,9 @@ class DataProcessing():
             for model in self.data_dictionary[var].keys():
                 if fit == 'rolling':
                     # use a rolling mean over 5 years
-                    if self.period[-1] == 'Y':
-                        assert self.data_dictionary[var][model]["time.year"].size > 5, "too short a time period to take rolling average"
-                        roll = int(5/int(self.period[:-1]))
-                        trend = self.data_dictionary[var][model].mean("member").rolling(time=roll, min_periods=1, center=True).mean()
-                    elif self.period[-1] == 'M':
-                        assert self.data_dictionary[var][model]["time"].size > 60, "too short a time period to take rolling average"
-                        roll = int(60/int(self.period[:-1]))
-                        trend = self.data_dictionary[var][model].mean("member").rolling(time=roll, min_periods=1, center=True).mean()
-                    else:
-                        assert False, "rolling average not implemented for daily data"
+                    assert self.data_dictionary[var][model]["time.year"].size > 5, "too short a time period to take rolling average"
+                    roll = 5
+                    trend = self.data_dictionary[var][model].mean("member").rolling(time=roll, min_periods=1, center=True).mean()
                 elif type(fit) == int:
                     # use fit degree polyfit on the ensemble mean
                     trend = self.data_dictionary[var][model].mean("member").polyfit(dim="time", deg=fit)
@@ -628,36 +466,6 @@ class DataProcessing():
                 # standardize the datasets
                 self.data_dictionary[var][model] = (self.data_dictionary[var][model] - model_mean) / model_std
 
-    # -------------------------------------------------------------------------------
-
-    # def regional_mean(self, var_list=None):
-    #     """
-    #     get the mean for a variable over the entire region for each dataset
-        
-    #     inputs:
-    #         - var_list: a list of variables that should be converted to lat/lon averages.
-    #         the entries in var_list need to match the names of the variables of the dataset.
-    #     outputs:
-    #         - data_dictionary with global (over remaining region) averages for the
-    #         variables in var_list.
-    #         shape will be [time, member].
-    #     """
-    #     # if no variables are specified, use all available variables in the data_dictionary
-    #     if var_list is None:
-    #         var_list = list(self.data_dictionary.keys())
-    #     print('calculating mean for variables: ', *var_list)
-    #     if type(var_list) is not list:
-    #         var_list = [var_list,]
-        
-    #     # for each requested variable
-    #     for var in var_list:
-    #         # for each model (get down to the xarray level from the dictionary)
-    #         for model in self.data_dictionary[var].keys():
-    #             # get the latitude weights
-    #             weights = np.cos(np.deg2rad(self.data_dictionary[var][model].lat))
-    #             # get the global mean
-    #             self.data_dictionary[var][model] = self.data_dictionary[var][model].weighted(weights).mean(("lon", "lat"), skipna=True)
-    
     # -------------------------------------------------------------------------------
     
     def baseline_norm(self, baseline, var_list=None):
