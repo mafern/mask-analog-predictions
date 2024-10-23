@@ -1,19 +1,100 @@
 import numpy as np
 import xarray as xr
-import gzip
 import os
 import glob
 import _data_processing as _dp
-import pickle
 from copy import deepcopy
 
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
-PERIOD = 'monthly'
 
-def process_data(experiment_settings, overwrite_data=False):
+# -------------------------------------------------------------------------------
+
+def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False):
     """
-    description
+    spatially and temporally smooth the requested data and save;
+    will ignore models that require upsampling based on the resolution
+
+    Input:
+        - resolution: [lat, lon] resolution
+        - var_list: list of variables to process, -1 means all available
+        - model_list: list of models to process, -1 means all available
+        - overwrite_data: whether to overwrite any currently saved data that matches the given inputs
+    """
+    # get model list, if not specified
+    if model_list == -1:
+        model_list = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
+        model_list = np.sort([os.path.basename(model_list[i]) for i in range(len(model_list))])
+
+    # loop through each model in model_list and preprocess
+    for model in model_list:
+        # get the available variables for this model
+        if var_list == -1:
+            var_list = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+model+'/*'))
+            var_list = np.sort([os.path.basename(var_list[i]) for i in range(len(var_list))])
+        # check that the resolution of this model is not smaller than requested -- if so, skip
+        # (do not want to downscale at this point, perhaps in the future)
+        model_res_dict = get_model_res_dictionary(scratch=scratch)
+        if np.any(np.array(model_res_dict[model]) > np.array(resolution)):
+            print("requested resolution would require downscaling, skipping", model)
+            continue
+
+        # for each variable requested
+        for var in var_list:
+            # check if this combination of models, variables, and resolution has already been preprocessed
+            preprocessed_folder = os.path.join(os.path.dirname(__file__), "processed_data", var+'_lat'+str(np.round(resolution[0], 2))+'_lon'+str(np.round(resolution[1], 2)))
+            # if the folder does not yet exist, create it
+            if not os.path.exists(preprocessed_folder):
+                os.mkdir(os.path.join(os.path.dirname(__file__), "processed_data", preprocessed_folder))
+            preprocessed_filename = os.path.join(preprocessed_folder, model+'.nc')
+            if not overwrite_data and os.path.exists(preprocessed_filename):
+                print("skipping", model, var)
+                continue
+            # get available members for this model and variable
+            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, var, '*')))
+            # check that this model has this variable (if not, skip to next)
+            if files.size == 0:
+                print("skipping", model, var)
+                continue
+
+            # now that we are actually doing some preprocessing, print model, var, number of members
+            print('preprocessing', files.size, var, 'members from model', model)
+
+            # define the preprocessing steps
+            preprocess_steps = ["smooth_time()",
+                                "smooth_space(resolution)"]
+            # initialize the processing object, loads the data
+            input_raw = _dp.DataProcessing([model], [var], list(np.arange(files.size)), 0, resolution, load_raw=True)
+
+            # run some processing steps for the inputs
+            print('#################################################################')
+            print('processing', model, var, 'dataset')
+            print('#################################################################')
+            for step in preprocess_steps:
+                eval('input_raw.'+step)
+                print('-------------------------------------------------------')
+            print('-------------------------------------------------------')
+
+            # get the xarray out of the dictionary
+            input_raw = input_raw.data_dictionary[var][model]
+            # make a list of the model name repeating for the number of members
+            repeat_model = [model] * files.size
+            # add the member indices as a coordinate
+            input_raw = input_raw.assign_coords(member=(np.arange(files.size)))
+            # and add the models as a coordinate
+            input_raw = input_raw.assign_coords(model=('member', repeat_model))
+            # re-type the data to 32 bit
+            input_raw = input_raw.assign_coords(lat=input_raw['lat'].astype(FLOAT_TYPE),
+                                                lon=input_raw['lon'].astype(FLOAT_TYPE),
+                                                member=input_raw['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+            # save processed data
+            input_raw.to_netcdf(preprocessed_filename)
+
+# -------------------------------------------------------------------------------
+
+def process_data(experiment_settings):
+    """
+    process previously saved data (which has been smoothed to yearly and smoothed to a common resolution)
 
     inputs:
         - experiment_settings: a dictionary containing all of the information for
@@ -22,12 +103,10 @@ def process_data(experiment_settings, overwrite_data=False):
     outputs:
         - processed datasets for this experiment
     """
-    # parse the experiment_settings
-    experiment_name = experiment_settings['experiment_name']
     # analog, training, validation splits, a dictionary with keys: 'analog', 'training', 'validation'
     split = experiment_settings['split']
-    # set up the model/member dictionary, which allows random selection of members without repeating
-    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*/*')))}
+    # set up local version of model/member dictionary, allows random selection of members without repeating
+    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
     
@@ -35,122 +114,104 @@ def process_data(experiment_settings, overwrite_data=False):
     processed_data = {}
     # for each of the split sets (analog, training, validation)
     for split_set in split.keys():
-        # file to look for if preprocessing has been completed previously
-        processed_data_file = os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split_set+'.pickle')
-        # file does not exist or overwrite has been requested
-        if overwrite_data or not os.path.exists(processed_data_file):
-            # make directory
-            if not os.path.exists(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name)):
-                os.mkdir(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name))
-            # list of models to use for the analog set, training, and validation sets
-            if split_set == 'analog':
-                model_list = experiment_settings['analog_models']
-            elif split_set == 'training':
-                model_list = experiment_settings['soi_models']
-            else:
-                model_list = experiment_settings['val_models']
-            
-            # load the appropriate ensemble members for the requested models/variables
-            input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], PERIOD, split[split_set], seed, model_member_dict)
-            if np.isin(experiment_settings['target_var'][0], experiment_settings['variable_list']):
-                # deepcopy a version for the outputs
-                output_raw = deepcopy(input_raw)
-                # variables that should be removed (non-target variables)
-                remove_vars = np.setdiff1d(experiment_settings['variable_list'], experiment_settings['target_var'])
-                # remove them
-                for drop in remove_vars:
-                    output_raw.data_dictionary.pop(drop)
-            # target variable is not one of the input variables
-            else:
-                output_raw = _dp.DataProcessing(model_list, experiment_settings['target_var'], PERIOD, split[split_set], seed, model_member_dict)
-
-            # initialize dictionary for this split set
-            current_data = {"inputs": {}, "target": {}, "lat": {}, "lon": {}, "land_ocean_mask": {}}
-            # run some processing steps for the inputs
-            print('#################################################################')
-            print('processing', split_set, 'input dataset')
-            print('#################################################################')
-            for step in experiment_settings['inputs_proc_steps']:
-                eval('input_raw.'+step)
-                print('-------------------------------------------------------')
-            print('-------------------------------------------------------')
-
-            # run some processing steps for the targets
-            print('#################################################################')
-            print('processing', split_set, 'target dataset')
-            print('#################################################################')
-            for step in experiment_settings['target_proc_steps']:
-                eval('output_raw.'+step)
-                print('-------------------------------------------------------')
-            print('-------------------------------------------------------')
-
-            # add processed data to the current_data dictionary, but first flatten models and variables into single DataSet
-            for var in experiment_settings["variable_list"]:
-                # preserve the model of each member for downstream use
-                for model in model_list:
-                    used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
-                    # make a list of the model name repeating for the number of members
-                    repeat_model = [model] * split[split_set]
-                    # add the member indices as a coordinate
-                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(used_members))
-                    # and add the models as a coordinate
-                    input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
-                # now flatten over models
-                current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()],
-                                                        dim="member", coords="minimal")
-            # flatten input variables into single dataset (if there is more than one variable)
-            if len(experiment_settings["variable_list"]) > 1:
-                # multiple variables, but same resolution for all
-                current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
-                # get latitude and longitude
-                current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
-                current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
-            # if there is only a single variable, continue on
-            else:
-                current_data["inputs"] = current_data["inputs"][var]
-                # get latitude and longitude
-                current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
-                current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
-
-            # repeat for output
-            target_var = experiment_settings['target_var'][0]
-            for model in model_list:
-                output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(member=(used_members))
-                output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(model=('member', repeat_model))
-            current_data["target"][target_var] = xr.concat([output_raw.data_dictionary[target_var][model] for model in output_raw.data_dictionary[target_var].keys()],
-                                                            dim="member", coords="minimal")
-            # load in the target dataset
-            current_data["target"] = current_data["target"][experiment_settings['target_var'][0]] 
-
-            # if a land or ocean mask was used, carry that over
-            if experiment_settings['mask']:
-                current_data['land_ocean_mask'] = input_raw.final_mask.astype(FLOAT_TYPE)
-            else:
-                current_data['land_ocean_mask'] = xr.DataArray(data=1).astype(FLOAT_TYPE)
-                
-            # re-type the data to 32 bit
-            current_data['inputs'] = current_data['inputs'].assign_coords(lat=current_data['inputs']['lat'].astype(FLOAT_TYPE),
-                                                                          lon=current_data['inputs']['lon'].astype(FLOAT_TYPE),
-                                                                          member=current_data['inputs']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
-            current_data['target'] = current_data['target'].assign_coords(lat=current_data['target']['lat'].astype(FLOAT_TYPE),
-                                                                          lon=current_data['target']['lon'].astype(FLOAT_TYPE),
-                                                                          member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
-            # save processed data in pickle format
-            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split_set+'.pickle'), "wb") as filename:
-                pickle.dump(current_data, filename)
-
-            # update dictionary to return
-            processed_data[split_set] = current_data
-            # update model_member_dict for next split
-            model_member_dict = input_raw.model_member_dict
+        # list of models to use for the analog set, training, and validation sets
+        if split_set == 'analog':
+            model_list = experiment_settings['analog_models']
+        elif split_set == 'training':
+            model_list = experiment_settings['soi_models']
         else:
-            # files does exist and overwrite has not been requested
+            model_list = experiment_settings['val_models']
+        
+        # load the appropriate ensemble members for the requested models/variables
+        input_raw = _dp.DataProcessing(model_list, experiment_settings['variable_list'], split[split_set], seed, experiment_settings['resolutions'], model_member_dict)
+        if np.isin(experiment_settings['target_var'][0], experiment_settings['variable_list']):
+            # deepcopy a version for the outputs
+            output_raw = deepcopy(input_raw)
+            # variables that should be removed (non-target variables)
+            remove_vars = np.setdiff1d(experiment_settings['variable_list'], experiment_settings['target_var'])
+            # remove them
+            for drop in remove_vars:
+                output_raw.data_dictionary.pop(drop)
+        # target variable is not one of the input variables
+        else:
+            output_raw = _dp.DataProcessing(model_list, experiment_settings['target_var'], split[split_set], seed, experiment_settings['resolutions'], model_member_dict)
 
-            # load pickle files which are dictionaries with both inputs and target
-            # for each of the different split sets (analog, training, validation)
-            with gzip.open(processed_data_file, "rb") as filename:
-                processed_data[split_set] = pickle.load(filename)
-            print('loading pre-saved', split_set, 'dataset')
+        # initialize dictionary for this split set
+        current_data = {"inputs": {}, "target": {}, "lat": {}, "lon": {}, "land_ocean_mask": {}}
+        # run some processing steps for the inputs
+        print('#################################################################')
+        print('processing', split_set, 'input dataset')
+        print('#################################################################')
+        for step in experiment_settings['inputs_proc_steps']:
+            eval('input_raw.'+step)
+            print('-------------------------------------------------------')
+        print('-------------------------------------------------------')
+
+        # run some processing steps for the targets
+        print('#################################################################')
+        print('processing', split_set, 'target dataset')
+        print('#################################################################')
+        for step in experiment_settings['target_proc_steps']:
+            eval('output_raw.'+step)
+            print('-------------------------------------------------------')
+        print('-------------------------------------------------------')
+
+        # add processed data to the current_data dictionary, but first flatten models and variables into single DataSet
+        for var in experiment_settings["variable_list"]:
+            # preserve the model of each member for downstream use
+            for model in model_list:
+                used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
+                # make a list of the model name repeating for the number of members
+                repeat_model = [model] * split[split_set]
+                # add the member indices as a coordinate
+                input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(used_members))
+                # and add the models as a coordinate
+                input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(model=('member', repeat_model))
+            # now flatten over models
+            current_data["inputs"][var] = xr.concat([input_raw.data_dictionary[var][model] for model in input_raw.data_dictionary[var].keys()],
+                                                    dim="member", coords="minimal")
+        # flatten input variables into single dataset (if there is more than one variable)
+        if len(experiment_settings["variable_list"]) > 1:
+            # multiple variables, but same resolution for all
+            current_data["inputs"] = xr.merge([current_data["inputs"][var] for var in current_data["inputs"].keys()], join='inner')
+            # get latitude and longitude
+            current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
+            current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
+        # if there is only a single variable, continue on
+        else:
+            current_data["inputs"] = current_data["inputs"][var]
+            # get latitude and longitude
+            current_data['lat'] = current_data['inputs'].lat.to_numpy().astype(FLOAT_TYPE)
+            current_data['lon'] = current_data['inputs'].lon.to_numpy().astype(FLOAT_TYPE)
+
+        # repeat for output
+        target_var = experiment_settings['target_var'][0]
+        for model in model_list:
+            output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(member=(used_members))
+            output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(model=('member', repeat_model))
+        current_data["target"][target_var] = xr.concat([output_raw.data_dictionary[target_var][model] for model in output_raw.data_dictionary[target_var].keys()],
+                                                        dim="member", coords="minimal")
+        # load in the target dataset
+        current_data["target"] = current_data["target"][experiment_settings['target_var'][0]] 
+
+        # if a land or ocean mask was used, carry that over
+        if experiment_settings['mask']:
+            current_data['land_ocean_mask'] = input_raw.final_mask.astype(FLOAT_TYPE)
+        else:
+            current_data['land_ocean_mask'] = xr.DataArray(data=1).astype(FLOAT_TYPE)
+            
+        # re-type the data to 32 bit
+        current_data['inputs'] = current_data['inputs'].assign_coords(lat=current_data['inputs']['lat'].astype(FLOAT_TYPE),
+                                                                        lon=current_data['inputs']['lon'].astype(FLOAT_TYPE),
+                                                                        member=current_data['inputs']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+        current_data['target'] = current_data['target'].assign_coords(lat=current_data['target']['lat'].astype(FLOAT_TYPE),
+                                                                        lon=current_data['target']['lon'].astype(FLOAT_TYPE),
+                                                                        member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+        
+        # update dictionary to return
+        processed_data[split_set] = current_data
+        # update model_member_dict for next split
+        model_member_dict = input_raw.model_member_dict
     
     return processed_data
 
@@ -159,8 +220,8 @@ def process_data(experiment_settings, overwrite_data=False):
 def neural_network_stack(dataset, settings):
     "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
     # replace NaNs with zeros
-    inputs = dataset['inputs'].fillna(0)
-    target = dataset['target'].fillna(0)
+    inputs = dataset['inputs']
+    target = dataset['target']
 
     # include trajectory for training (sliding window of time indices)
     traj_inds = np.lib.stride_tricks.sliding_window_view(np.arange(target.time.size), settings['trajectory'])
@@ -172,6 +233,11 @@ def neural_network_stack(dataset, settings):
     traj_inds = xr.DataArray(data=traj_inds, dims=['time', 'trajectory'])
     inputs = inputs.isel(time=traj_inds).transpose('time', 'member', 'lat', 'lon', 'trajectory')
     inputs = inputs.drop('time').stack(sample=['time', 'member']).isel(trajectory=0)
+
+    # drop NaNs
+    good_inds = np.where(~np.isnan(inputs.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[0]
+    inputs = inputs.isel(sample=good_inds)
+    target = target.isel(sample=good_inds)
 
     # stack time and members as samples, convert to numpy array with correct shape
     inputs = inputs.to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
@@ -285,3 +351,17 @@ def make_model_masks(file):
             lon=(["lon"], oceanmask.lon.values))
     )
     ocean_xr.to_netcdf(os.path.join(*file.split('/')[:-2], 'oceanmask.nc'))
+
+# -------------------------------------------------------------------------------
+
+def get_model_res_dictionary(scratch=False):
+    if scratch:
+        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
+        resolution_dictionary = {}
+        for model in models:
+            file1 = glob.glob(model+'/*/*')[0]
+            data = xr.load_dataset(file1)
+            resolution_dictionary[os.path.basename(model)] = [np.abs(np.unique(np.diff(data.lat))[0]), np.abs(np.unique(np.diff(data.lon))[0])]
+    else:
+        resolution_dictionary = {'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.8947368421052602, 2.5], 'ACCESS-ESM1-5': [1.25, 1.875], 'CanESM5-1': [2.7672718509152787, 2.8125],  'CMCC-CM2-HR4': [0.9424083769633285, 1.25], 'CESM2': [0.9424083769633285, 1.25], 'AWI-ESM-1-1': [1.8496375593391292, 1.875], 'CAMS-CSM1': [1.1120905585095784, 1.125], 'CMCC-ESM2': [0.9424083769633285, 1.25], 'CESM2-WACCM': [0.9424083769633285, 1.25], 'MPI-ESM1-2-HR': [0.9272240138487007, 0.9375], 'AWI-CM-1-1': [0.9272240138487149, 0.9375], 'MIROC': [1.3890301392687405, 1.40625], 'MPI-ESM1-2-LR': [1.8496375593391292, 1.875], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.3890301392673479, 1.40625], 'CMCC-CM2-SR5': [0.9424083769633285, 1.25], 'MRI-ESM2-0': [1.112089999999995, 1.125], 'BEST': [1.0, 1.0], 'MIROC-ES2H': [1.3890301392687405, 1.40625], 'CanESM5-CanOE': [2.7672718509152787, 2.8125], 'ACCESS-CM2': [1.25, 1.875], 'BCC-ESM1': [2.7672718509152645, 2.8125], 'UKESM1-1-LL': [1.25, 1.875], 'UKESM1-0-LL': [1.25, 1.875], 'CanESM5': [2.7672718509152787, 2.8125], 'BCC-CSM2': [1.1120905585095784, 1.125], 'ERA5': [0.25, 0.25], 'TaiESM': [0.9424083769633285, 1.25], 'NorESM2-MM': [0.9424083769633285, 1.25], 'MIROC-ES2L': [2.7672718509152645, 2.8125]}
+    return resolution_dictionary
