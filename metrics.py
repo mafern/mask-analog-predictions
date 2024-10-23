@@ -117,9 +117,9 @@ def get_soi_inputs(prediction_dict, soi_model, soi_member, variable, global_aver
 
 # -------------------------------------------------------------------------------
 
-def get_perfect_analogs(prediction_dict, experiment_name, soi_model, soi_member, variable, global_average=True):
-    truth, _, _, _ = ba.get_targets(experiment_name, soi_model, soi_member, 1, variable, 1,
-                                    prediction_dict=prediction_dict, global_mean=False)
+def get_perfect_analogs(prediction_dict, experiment_name, soi_model, soi_member, variable, global_average=True, soi_signature=None):
+    truth, _, _, _ = ba.get_targets(experiment_name, soi_model, soi_member, 1, variable, 1, prediction_dict=prediction_dict,
+                                    global_mean=False, soi_signature=soi_signature)
     non_soi_analogs = get_non_soi_analogs(prediction_dict, soi_model, soi_member, variable, global_average=global_average)
     perfect_analogs = []
     # for each time in truth
@@ -145,7 +145,7 @@ class AnalogMetrics():
     """
     Class for calculating performance of analog predictions
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, soi_signature=None):
         # save the experiment_name and other useful variables
         self.experiment_name = experiment_name
         self.soi_model = soi_model
@@ -157,21 +157,23 @@ class AnalogMetrics():
         # assemble the prediction dictionary
         try:
             self.prediction_dict = ba.BestAnalogs(experiment_name).prediction_dict
-            # get the soi savename corresponding to the requested soi_model, soi_member, and tether
-            soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
+            self.soi_signature = soi_signature
+            if soi_signature is None:
+                # get the soi savename corresponding to the requested soi_model, soi_member, and tether
+                self.soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
             # check the selected soi exists
-            self.prediction_dict['analogs'][soi_signature]
-            print('loaded analogs for', soi_signature)
+            self.prediction_dict['analogs'][self.soi_signature]
+            print('using analogs from', self.soi_signature)
         except:
             print('no previouly saved analog library or requested analogs does not exist!')
 
 
         # grab perfect analogs, analog library, and truth
         self.perfect_analogs = get_perfect_analogs(self.prediction_dict, self.experiment_name, soi_model, soi_member, variable,
-                                                   global_average=False)
+                                                   global_average=False, soi_signature=self.soi_signature)
         self.analog_library = get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=False)
         self.truth, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
-                                             prediction_dict=self.prediction_dict)
+                                             prediction_dict=self.prediction_dict, soi_signature=self.soi_signature)
         # keep only the times where the analog prediction, library, and truth overlap (and account for tether length)
         self.perfect_analogs = self.perfect_analogs[self.leadtime+self.tether-1:]
         self.analog_library = self.analog_library.unstack()[..., self.leadtime+self.tether-1:].transpose("time", "lat", "lon", "member")
@@ -191,7 +193,7 @@ class AnalogMetrics():
 
         # get the targets for the requested soi and variable, as well as the prediction (maps)
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
         
@@ -232,7 +234,7 @@ class AnalogMetrics():
         elif prediction == "analog":
             # return the std across analogs for the prediction
             _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                             prediction_dict=self.prediction_dict, return_average=False)
+                                             prediction_dict=self.prediction_dict, return_average=False, soi_signature=self.soi_signature)
             # align analog prediction with analog library and truth
             analog = analog[:-self.leadtime]
             analog_spread = analog.var("sample", skipna=True).sel(time=time_slice)
@@ -270,7 +272,7 @@ class AnalogMetrics():
 
         # get the targets for the requested soi and variable
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
 
@@ -316,7 +318,7 @@ class AnalogMetrics():
             time_slice = slice("0000", "9999")
 
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
 
@@ -378,7 +380,7 @@ class AnalogMetrics():
 
         # get truth, prediction, and analog library
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, return_average=False)
+                                         prediction_dict=self.prediction_dict, return_average=False, soi_signature=self.soi_signature)
         # align truth, analog prediction, perfect analogs, and analog library time range
         analog = analog[:-self.leadtime].sel(time=time_slice)
         non_soi_analogs = self.analog_library.sel(time=time_slice)
@@ -459,7 +461,7 @@ class AnalogMetrics():
 
         # get analog prediction, truth, library
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature)
         # align truth, analog prediction, perfect analogs, and library
         analog = analog[:-self.leadtime].sel(time=time_slice)
         truth = self.truth.sel(time=time_slice)
