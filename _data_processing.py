@@ -4,23 +4,29 @@ DATA PROCESSING CLASS: only works with netcdf (.nc) files currently
 import numpy as np
 import glob
 import os
-from copy import deepcopy
 import xarray as xr
 xr.set_options(keep_attrs=True)
 import xesmf as xe
 import regionmask
 import json
+from copy import deepcopy
 
 class DataProcessing():
     """
-    description
+    class to load models and perform various preprocessing steps to prepare the data for the mask training or analog library
     
     inputs:
-        - 
+        - model_list: list of models to use
+        - variable_list: list of variable to use
+        - n_members: either an integer number of members, or a list of the indices to use
+        - seed: random seed for selection of members
+        - resolution: resolution to use for members (also, where to look for presaved data)
+        - model_member_dict: list of members for each model to help avoid using the same member twice
+        - load_raw: whether to load from raw monthly data if presaved data is not availablef
     outputs:
         - 
     """
-    def __init__(self, model_list, variable_list, n_members, seed, model_member_dict=None):
+    def __init__(self, model_list, variable_list, n_members, seed, resolution, model_member_dict=None, load_raw=False):
         ""
         
         # save some global variables that will be useful
@@ -34,9 +40,15 @@ class DataProcessing():
                              ]
         self.global_map = True
 
-        # save model_member_dict
-        self.model_member_dict = deepcopy(model_member_dict)
+        # resolution, for checking previously saved preprocessed data
+        self.resolution = resolution
+        if model_member_dict is None:
+            # save model_member_dict
+            model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
+        self.model_member_dict = model_member_dict
 
+        # whether to load raw data or cancel if preprocessed is not found
+        self.load_raw = load_raw
         # load the data from the requested models and variables
         self.data_dictionary = self.load_data(model_list, variable_list, n_members, seed)
  
@@ -66,17 +78,18 @@ class DataProcessing():
             # initialize dictionaries
             data_dictionary[variable] = {}
             self.attr_dictionary[variable] = {
-                "time": ["0000-01-01", "3000-01-01"], 
-                "res": [0, 0]
+                "time": ["0000-01-01", "3000-01-01"]
             }
+            # get a model_member_dictionary for this variable
+            model_member_dict = deepcopy(self.model_member_dict)
             
             for model in model_list:
                 if type(n_members) == int:
                     # check there are still enough members for this model when training
-                    assert np.size(self.model_member_dict[model]) >= n_members, ["more members requested than available. requested: " + str(n_members) + ", available: " + str(np.size(self.model_member_dict[model]))]
+                    assert np.size(model_member_dict[model]) >= n_members, ["more members requested than available. requested: " + str(n_members) + ", available: " + str(np.size(model_member_dict[model]))]
                 
                 # file path for this variable and model
-                file_path = os.path.join(os.path.dirname(__file__), 'raw_data/monthly/', model, variable)
+                file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
                 # check that path exists, if not print warning and continue
                 if not os.path.exists(file_path):
                     print('directory:', file_path, 'does not exist')
@@ -91,46 +104,59 @@ class DataProcessing():
                 else:
                     # generate randomly seeded choice object and randomly select members
                     rng_seed = np.random.default_rng(seed)
-                    used_members = np.sort(rng_seed.choice(self.model_member_dict[model], n_members, replace=False, shuffle=False))
+                    used_members = np.sort(rng_seed.choice(model_member_dict[model], n_members, replace=False, shuffle=False))
                 # select those files
                 file_list = file_list[used_members]
 
-                for ii, file in enumerate(file_list):
-                    # load file -- will be returned in xarray format
-                    ens_member = xr.load_dataset(file).squeeze()
-                    # resample for consistency with monthly data (day of month)
-                    ens_member = ens_member.resample(time='M').mean()
-
-                    # create ensemble_list or add to ensemble_list
-                    if ii == 0:
-                        # add member dimension
-                        ensemble_list = ens_member.expand_dims(dim={"member": 1}, axis=0)
+                if not self.load_raw:
+                    # check if the preprocessed data exists for this model/variable/resolution
+                    var_res_dir = variable+'_lat'+str(np.round(self.resolution[0], 2))+'_lon'+str(np.round(self.resolution[1], 2))
+                    preprocessed_path = os.path.join(os.path.dirname(__file__), "processed_data", var_res_dir)
+                    preprocessed_file = os.path.join(preprocessed_path, model+'.nc')
+                    # if it does exist, just load it, otherwise continue with loading from raw_data
+                    if os.path.exists(preprocessed_file):
+                        print('found preprocessed data for', model)
+                        ensemble_list = xr.load_dataset(preprocessed_file).sel(member=used_members)
+                        data_dictionary[variable][model] = ensemble_list
                     else:
-                        ensemble_list = xr.concat([ensemble_list, ens_member], dim="member")
+                        print('no preprocessed data found for', model)
+                        print('skipping')
+                        continue
+                else:
+                    print('processing from raw data')
+                    for ii, file in enumerate(file_list):
+                        # load file -- will be returned in xarray format
+                        ens_member = xr.load_dataset(file).squeeze()
+                        # resample for consistency with monthly data (day of month)
+                        ens_member = ens_member.resample(time='M').mean()
 
-                    # update the attr_dictionary
-                    # common time period between models: latest start time, earliest end time
-                    self.attr_dictionary[variable]["time"] = [
-                        np.max([ens_member.time.min().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][0]]), 
-                        np.min([ens_member.time.max().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][1]])
-                    ]
-                    # latitude resolution, then longitude resolution
-                    self.attr_dictionary[variable]["res"] = [
-                        np.max([np.diff(ens_member.lat[:2])[0], self.attr_dictionary[variable]["res"][0]]), 
-                        np.max([np.diff(ens_member.lon[:2])[0], self.attr_dictionary[variable]["res"][1]])
-                    ]
-                    ens_member.close()
+                        # create ensemble_list or add to ensemble_list
+                        if ii == 0:
+                            # add member dimension
+                            ensemble_list = ens_member.expand_dims(dim={"member": 1}, axis=0)
+                        else:
+                            ensemble_list = xr.concat([ensemble_list, ens_member], dim="member")
+                        ens_member.close()
 
-                # add model to the dictionary
-                # resample step is to align data types and should not change anything meaningful
-                ensemble_list = ensemble_list.convert_calendar("noleap")
-                data_dictionary[variable][model] = ensemble_list.resample(time='1M').mean()
-                print('successfully loaded', ii+1, 'ensemble members from', file_path)
+                    # add model to the dictionary
+                    # resample step is to align data types and should not change anything meaningful
+                    ensemble_list = ensemble_list.convert_calendar("noleap")
+                    data_dictionary[variable][model] = ensemble_list.resample(time='1M').mean()
+                    print('successfully loaded', ii+1, 'ensemble members from', file_path)
 
-        if type(n_members) == int:
-            # update model_member_dictionary to remove these members for later splits
-            self.model_member_dict[model] = np.setdiff1d(self.model_member_dict[model], used_members)
+                # update the attr_dictionary
+                # common time period between models: latest start time, earliest end time
+                self.attr_dictionary[variable]["time"] = [
+                    np.max([ensemble_list.dropna(dim='time').time.min().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][0]]), 
+                    np.min([ensemble_list.dropna(dim='time').time.max().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][1]])
+                ]
 
+                # if type(n_members) == int:
+                # update model_member_dict to remove these members for later splits
+                model_member_dict[model] = np.setdiff1d(model_member_dict[model], used_members)
+
+        # update self.model_member_dict (all variables should pick same members due to seed, so once at the end is fine here)
+        self.model_member_dict = model_member_dict
         return data_dictionary
     
     # -------------------------------------------------------------------------------
@@ -238,7 +264,7 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     # --------------------- smooth_space, mask_data, get_region ---------------------
                 
-    def smooth_space(self, resolutions=None):
+    def smooth_space(self, resolutions):
         """
         smooth resolution between all data; user selected or (default) coarsest data.
         should be done on the global data before extracting a region.
@@ -253,9 +279,6 @@ class DataProcessing():
         assert self.global_map, "up- or down-sampling should be done before extracting a region"
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
-            # if no time range given, use attr_dictionary (common time period between models)
-            if resolutions is None:
-                resolutions = self.attr_dictionary[var]['res']
             print('regridding datasets to resolution', resolutions)
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
@@ -293,7 +316,7 @@ class DataProcessing():
                 # try loading model specific mask first
                 try:
                     # load map for this model
-                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/', model, mask+'mask.nc'))
+                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data/', model, mask+'mask.nc'))
                     # if the current resolution is different from default (does not match saved mask)
                     if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
                         # adjust the resolution of the mask to be the same as the model and variable
