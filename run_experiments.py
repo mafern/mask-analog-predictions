@@ -24,6 +24,8 @@ c_stalwart = '#105456'
 blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
 blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
 
+res_options = [[0.9424083769633285, 1.25], [1.1120905585095784, 1.25], [1.3890301392687405, 1.40625], [1.8496375593391292, 1.875], [2.7672718509152645, 2.8125]]
+
 def get_settings(experiment_name):
     "helper to be consistent with existing code"
     experiments = Experiments().experiments
@@ -164,13 +166,14 @@ class Experiments():
         # get the target variable if one has not been passed
         if target_var is None:
             target_var = [variable_list[0],]
+        if type(target_var) != list:
+            target_var = [target_var]
         # check validation models
         if val_models is None:
             val_models = soi_models
         # fill a dictionary with the data split values
         split = {"analog": split[0], "training": split[1], "validation": split[2]}
         # option for a number to be passed for resolution (1=highest, 5=lowest)
-        res_options = [[0.9424083769633285, 1.25], [1.1120905585095784, 1.25], [1.3890301392687405, 1.40625], [1.8496375593391292, 1.875], [2.7672718509152645, 2.8125]]
         if type(resolutions) == int:
             resolutions = res_options[resolutions]
 

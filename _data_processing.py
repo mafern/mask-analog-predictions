@@ -90,6 +90,7 @@ class DataProcessing():
                 
                 # file path for this variable and model
                 file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
+                
                 # check that path exists, if not print warning and continue
                 if not os.path.exists(file_path):
                     print('directory:', file_path, 'does not exist')
