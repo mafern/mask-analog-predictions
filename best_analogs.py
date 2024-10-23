@@ -13,7 +13,6 @@ import bottleneck as bn
 
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
-PERIOD = 'monthly'
 
 # -------------------------------------------------------------------------------
 # general use functions
@@ -144,10 +143,13 @@ def get_full_analog_range(experiment_name, prediction_dict, soi_model, soi_membe
 def get_target_region(experiment_name, prediction_dict=None):
     # load the prediction_dict if none is passed
     if prediction_dict is None:
-        with gzip.open(os.path.join(os.path.dirname(__file__), 'saved_analogs', experiment_name+'.pickle'), 'rb') as file:
+        with gzip.open(os.path.join(os.path.dirname(__file__), 'saved_analogs', experiment_name, 'target.pickle'), 'rb') as file:
             prediction_dict = pickle.load(file)
-    lat = prediction_dict['target'].lat
-    lon = prediction_dict['target'].lon
+        lat = prediction_dict.lat
+        lon = prediction_dict.lon
+    else:
+        lat = prediction_dict['target'].lat
+        lon = prediction_dict['target'].lon
     return(lat, lon)
 
 # -------------------------------------------------------------------------------
@@ -170,22 +172,11 @@ class BestAnalogs():
         self.leadtime = experiment_settings['leadtime']
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         
-        # get the training and validation data so they can be avoided in the soi and analogs
-        self.used_members = np.empty(0, dtype=int)
-        self.used_models = np.empty(0, dtype=str)
-        for split in ['training', 'validation']:
-            with gzip.open(os.path.join(os.path.dirname(__file__), "processed_data", experiment_name, experiment_name+'_'+split+'.pickle'), "rb") as filename:
-                # just getting the models and members, so either inputs or target is sufficient
-                split_data = pickle.load(filename)
-            # concatenate the training data used_models and used_members
-            self.used_members = np.concatenate([self.used_members, split_data['inputs'].member.to_numpy()])
-            self.used_models = np.concatenate([self.used_models, split_data['inputs'].model.to_numpy()])
-        
         # initialize the prediction_dict object (lat and lon from the training data)
         self.prediction_dict = {}
         self.prediction_dict['analogs'] = {}
-        self.prediction_dict['lat'] = split_data['lat']
-        self.prediction_dict['lon'] = split_data['lon']
+        self.used_members = np.empty(0, dtype=int)
+        self.used_models = np.empty(0, dtype=str)
 
         # construct or load a library of analogs    
         try:
@@ -207,17 +198,21 @@ class BestAnalogs():
         else:
             # if try succeeded, we have a prediction dataset, but may want to add more data to it
             # add the used_members and use_models arrays with the prediction_dict (avoid saving the same data again)
-            self.used_members = np.concatenate([self.used_members, self.prediction_dict['inputs'].member.to_numpy()])
-            self.used_models = np.concatenate([self.used_models, self.prediction_dict['inputs'].model.to_numpy()])
+            self.used_members = self.prediction_dict['inputs'].member.to_numpy()
+            self.used_models = self.prediction_dict['inputs'].model.to_numpy()
             # call process_new_data with model_list and n_members which will add new data to the dataset
             if model_list is not None and n_members is not None:
                 self.process_new_data(experiment_name, model_list, n_members)
                 # and save the expanded prediction dataset
                 with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
-                    pickle.dump(self.prediction_dict['inputs'], filename)     
+                    pickle.dump(self.prediction_dict['inputs'], filename)
                 with gzip.open(analog_path+'/target.pickle', "wb") as filename:
-                    pickle.dump(self.prediction_dict['target'], filename) 
+                    pickle.dump(self.prediction_dict['target'], filename)
 
+        # get lat and lon
+        self.prediction_dict['lat'] = self.prediction_dict['inputs']['lat']
+        self.prediction_dict['lon'] = self.prediction_dict['inputs']['lon']
+        
         # load any previously calculated analogs for specific sois
         try:
             analogs = glob.glob(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, '*'))
@@ -233,19 +228,15 @@ class BestAnalogs():
 # -------------------------------------------------------------------------------
 
     def process_new_data(self, experiment_name, model_list, new_members=-1):
-        """
-        
-        """        
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(experiment_name)
         variables = experiment_settings['variable_list']
         target_var = experiment_settings['target_var']
         # remove some of the processing steps that are not necessary for the prediction part
-        # (sync_time not needed, shift_inout_time unnecessarily removes dates, regional_mean can be done later)
+        # (sync_time not needed, shift_inout_time unnecessarily removes dates)
         remove_steps = ["sync_time(experiment_settings['time_range'])",
-                        "shift_inout_time(-experiment_settings['leadtime'], experiment_settings['window'])",
-                        "shift_inout_time(experiment_settings['leadtime'], experiment_settings['window'])",
-                        "regional_mean(experiment_settings['variable_list'])",
+                        "shift_inout_time(-experiment_settings['leadtime'])",
+                        "shift_inout_time(experiment_settings['leadtime'])",
                         "norm_data()"]
         for step in remove_steps:
             if np.isin(step, experiment_settings['inputs_proc_steps']):
@@ -253,11 +244,15 @@ class BestAnalogs():
             if np.isin(step, experiment_settings['target_proc_steps']):
                 experiment_settings['target_proc_steps'].remove(step)
         
+        # option for doing all models
+        if model_list == -1:
+            models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
+            model_list = [os.path.basename(model) for model in models]
+        
         # load the new raw data
         for ii, model in enumerate(model_list):
             # glob all the files and sort -- just used to get correct indices
-            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', PERIOD, model, variables[0], '*')))
-
+            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, variables[0], '*')))
             # remove indices corresponding to model/members that are in this models used_members
             model_used_members = self.used_members[np.where(self.used_models == model)]
             model_new_members = np.setdiff1d(np.arange(files.size), model_used_members)
@@ -276,10 +271,7 @@ class BestAnalogs():
             if model_new_members.size == 0:
                 print("skipping "+model)
                 continue
-            input_raw = _dp.DataProcessing([model], variables, PERIOD, list(model_new_members), experiment_settings['seed'])
-            for var in variables:
-                # make the resolution the same as the previously processed datasets
-                input_raw.attr_dictionary[var]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
+            input_raw = _dp.DataProcessing([model], variables, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
             # get the targets
             if np.isin(target_var[0], variables):
                 # deepcopy a version for the outputs
@@ -291,9 +283,8 @@ class BestAnalogs():
                     output_raw.data_dictionary.pop(drop)
             # target variable is not one of the input variables
             else:
-                output_raw = _dp.DataProcessing([model], target_var, PERIOD, list(model_new_members), experiment_settings['seed'])
-                output_raw.attr_dictionary[target_var[0]]['res'] = [np.diff(self.prediction_dict['lat']).mean(), np.diff(self.prediction_dict['lon']).mean()]
-
+                output_raw = _dp.DataProcessing([model], target_var, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
+                
             # run some processing steps for the inputs
             print('#################################################################')
             print('processing', model, 'input dataset')
