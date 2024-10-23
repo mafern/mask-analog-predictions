@@ -169,26 +169,24 @@ class Experiments():
             val_models = soi_models
         # fill a dictionary with the data split values
         split = {"analog": split[0], "training": split[1], "validation": split[2]}
+        # option for a number to be passed for resolution (1=highest, 5=lowest)
+        res_options = [[0.9424083769633285, 1.25], [1.1120905585095784, 1.25], [1.3890301392687405, 1.40625], [1.8496375593391292, 1.875], [2.7672718509152645, 2.8125]]
+        if type(resolutions) == int:
+            resolutions = res_options[resolutions]
 
         # get locals (i.e. all of the inputs to make_exp_dictionary) before assigning anything here
         function_inputs = locals()
         
-        inputs_process_dict = {"smooth_time(period='1Y')": '1Y',
-                               "sync_time(experiment_settings['time_range'])": time_range,
+        inputs_process_dict = {"sync_time(experiment_settings['time_range'])": time_range,
                                "mask_data(experiment_settings['mask'])": mask,
-                               "smooth_space(experiment_settings['resolutions'])": resolutions,
-
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "window_time(experiment_settings['window'])": window,
                                "shift_inout_time(-experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data}
         
-        target_process_dict = {"smooth_time(period='1Y')": '1Y',
-                               "sync_time(experiment_settings['time_range'])": time_range,
+        target_process_dict = {"sync_time(experiment_settings['time_range'])": time_range,
                                "mask_data(experiment_settings['mask'])": mask,
-                               "smooth_space(experiment_settings['resolutions'])": resolutions,
-
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "window_time(experiment_settings['window'])": window,
@@ -223,12 +221,12 @@ class Experiments():
 
     # -------------------------------------------------------------------------------
     
-    def get_experiment_data(self, experiment_name, overwrite_data=False):
+    def get_experiment_data(self, experiment_name):
         "process, or load previously processed, data. return stacked samples and place full data in class"
         # get settings
         experiment_settings = self.get_experiment(experiment_name)
         # make or load the data for this experiment
-        self.processed_data = dp.process_data(experiment_settings, overwrite_data=overwrite_data)
+        self.processed_data = dp.process_data(experiment_settings)
         # remove bnds dimension, if it exists
         for key in self.processed_data.keys():
             for inputs_target in ['inputs', 'target']:
@@ -249,14 +247,14 @@ class Experiments():
     
     # -------------------------------------------------------------------------------
     
-    def train_experiment_model(self, experiment_name, overwrite_data=False, overwrite_model=False, transfer=None):
+    def train_experiment_model(self, experiment_name, overwrite_model=False, transfer=None):
         # get settings
         experiment_settings = self.get_experiment(experiment_name)
         # get data
         (analog_inputs, analog_target,
          training_inputs, training_target,
          validation_inputs, validation_target,
-         lat, lon) = self.get_experiment_data(experiment_name, overwrite_data=overwrite_data)
+         lat, lon) = self.get_experiment_data(experiment_name)
         
         # reshape for multiple variables, since tensorflow flatten wants it this way (sample, var, lat, lon)
         analog_inputs = np.transpose(analog_inputs, (0, 3, 1, 2))
@@ -290,9 +288,9 @@ class Experiments():
 
     # -------------------------------------------------------------------------------
     
-    def make_mask(self, experiment_name, overwrite_data=False, overwrite_model=False, overwrite_mask=False, transfer=None):
+    def make_mask(self, experiment_name, overwrite_model=False, overwrite_mask=False, transfer=None):
         # get model (train or load) and the processed data
-        models = self.train_experiment_model(experiment_name, overwrite_data=overwrite_data, overwrite_model=overwrite_model, transfer=transfer)
+        models = self.train_experiment_model(experiment_name, overwrite_model=overwrite_model, transfer=transfer)
         # get the mask (both a raw version 'raw_mask' and a scaled/masked version 'mask')
         self.mask = self._make_mask(experiment_name, models, self.processed_data, overwrite_mask=overwrite_mask)
         return self.mask
@@ -355,7 +353,10 @@ class Experiments():
         if savename is None:
             savename = experiment_name+'/'+experiment_name+'_mask'
 
-        mask = self.make_mask(experiment_name)
+        try:
+            mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')).squeeze()
+        except:
+            mask = self.make_mask(experiment_name)
         for var in np.array(mask.data_vars):
             
             fig = plt.figure(figsize=(9, 9))
@@ -451,6 +452,22 @@ class Experiments():
         print(self.keys)
     
     # -------------------------------------------------------------------------------
+
+    @property
+    def get_preprocessed_list(self):
+        "return a list of the already processed variables and resolutions"
+        res_list = glob.glob(os.path.join(os.path.dirname(__file__), 'processed_data/*lat*'))
+        vars = [os.path.basename(res_item).split('_')[0] for res_item in res_list]
+        for var in np.unique(vars):
+            res_list = glob.glob(os.path.join(os.path.dirname(__file__), 'processed_data/'+var+'*'))
+            latlons = np.sort([os.path.basename(res_item).split('_')[1:] for res_item in res_list])
+            print(var+' (lat x lon):')
+            for latlon in latlons:
+                print(latlon[0][3:], 'x', latlon[1][3:])
+            print()
+        print(self.keys)
+    
+    # -------------------------------------------------------------------------------
     
     @property
     def list_regions(self):
@@ -495,13 +512,13 @@ class Experiments():
             'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0],
             }
 
-        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly/*'))
+        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
         models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
         # initialize list
         for model in models:
-            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, '*/'))
+            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, '*/'))
             model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/monthly', model, model_vars[i], '*'))) for i in range(len(model_vars))]
+            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, model_vars[i], '*'))) for i in range(len(model_vars))]
             print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[model])
             
         
