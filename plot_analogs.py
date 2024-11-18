@@ -7,8 +7,6 @@ import best_analogs as ba
 import metrics
 import copy
 
-# TODO: add some extremes plots
-
 # define some colors and cmaps -- csu and nuggets
 c_flowertrial = '#E56A54'
 c_horsetooth = '#008FB3'
@@ -46,7 +44,7 @@ class PlotAnalogs():
     """
     Class for plotting analog predictions for a given SOI.
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, fig_path=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, fig_path=None):
         if fig_path is None:
             fig_path = 'figures/'+experiment_name+'/'
         self.fig_path = fig_path
@@ -57,14 +55,17 @@ class PlotAnalogs():
         self.soi_member = soi_member
         self.variable = variable
         self.tether = tether
+        self.library_name = library_name
         # get the settings so the region name can be used in the figure
         self.settings = rexp.Experiments().get_experiment(self.experiment_name)
         self.leadtime = self.settings['leadtime']
 
         try:
-            self.prediction_dict = ba.BestAnalogs(experiment_name).prediction_dict
+            self.prediction_dict = ba.BestAnalogs(experiment_name, library_name=library_name).prediction_dict
             # get the soi savename corresponding to the requested soi_model, soi_member, and tether
             soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
+            if library_name is not None:
+                soi_signature = soi_signature + '_library_' + library_name
             # check the selected soi exists
             self.prediction_dict['analogs'][soi_signature]
             print('loaded analogs for', soi_signature)
@@ -73,15 +74,15 @@ class PlotAnalogs():
 
         # grab perfect analogs, analog library, and truth
         self.perfect_analogs = metrics.get_perfect_analogs(self.prediction_dict, self.experiment_name, soi_model, soi_member, variable,
-                                                           global_average=False)
+                                                           global_average=False, library_name=library_name)
         self.perfect_mean = metrics.get_perfect_analogs(self.prediction_dict, self.experiment_name, soi_model, soi_member, variable,
-                                                        global_average=True)
+                                                        global_average=True, library_name=library_name)
         self.analog_library = metrics.get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=False)
         self.library_mean = metrics.get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=True)
         self.truth, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
-                                             prediction_dict=self.prediction_dict)
+                                             prediction_dict=self.prediction_dict, library_name=library_name)
         self.truth_mean, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
-                                                  prediction_dict=self.prediction_dict, global_mean=True)
+                                                  prediction_dict=self.prediction_dict, global_mean=True, library_name=library_name)
 
 # -------------------------------------------------------------------------------
 
@@ -96,7 +97,7 @@ class PlotAnalogs():
 
         # get the analog prediction
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, global_mean=True)
+                                         prediction_dict=self.prediction_dict, global_mean=True, library_name=self.library_name)
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the true values (i.e. the soi target)
@@ -143,7 +144,7 @@ class PlotAnalogs():
 
         # get the targets for the requested soi and variable
         _, _, prediction_min, prediction_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                                              prediction_dict=self.prediction_dict, global_mean=True)
+                                                              prediction_dict=self.prediction_dict, global_mean=True, library_name=self.library_name)
         # get the full range of analog predictions
         all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
 
@@ -195,7 +196,8 @@ class PlotAnalogs():
             query_text = "pred_time >= 0000 & pred_time <= 9999"
 
         # get the all model mean
-        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)[:-self.leadtime]
+        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member,
+                                                  self.variable, global_mean=True, minmax=False)[:-self.leadtime]
 
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
@@ -243,10 +245,11 @@ class PlotAnalogs():
 
         # get the analog prediction
         _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                                           prediction_dict=self.prediction_dict, global_mean=True)
+                                                           prediction_dict=self.prediction_dict, global_mean=True, library_name=self.library_name)
         # get the full range of all models and the model mean
         all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)
-        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True, minmax=False)[:-self.leadtime]
+        all_model_mean = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member,
+                                                  self.variable, global_mean=True, minmax=False)[:-self.leadtime]
         # get the perfect analog prediction
         perfect_analogs = self.perfect_mean
 
@@ -329,7 +332,7 @@ class PlotAnalogs():
 
         # get the analog predictions to obtain the models selected
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-        global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict, library_name=self.library_name)
         analog = analog.query(time=query_text)
         
         # get the models that were selected for the analogs of this soi
@@ -400,7 +403,7 @@ class PlotAnalogs():
         
         # get the targets for the requested soi and variable to restrict the times
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict, library_name=self.library_name)
         
         xtimes = analog.sel(time=time_slice)['time.year']
         # get the models that were selected for the analogs of this soi
@@ -463,7 +466,7 @@ class PlotAnalogs():
         
         # get the indices for the predicted year (indices where truth is not nan + leadtime)
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict)
+                                         global_mean=True, return_average=False, prediction_dict=self.prediction_dict, library_name=self.library_name)
         # get the x and y axes (year predicted -- 1 per year, and year of analogs -- n_analogs per year)
         pred_years = analog.query(time=query_text)['pred_time']
         analog_years = analog.query(time=query_text)['analog_time']
@@ -518,9 +521,10 @@ class PlotAnalogs():
 
         # get the targets for the requested soi and variable
         _, analog, analog_min, analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                                           return_average=True, global_mean=True, prediction_dict=self.prediction_dict)
+                                                           return_average=True, global_mean=True, prediction_dict=self.prediction_dict, library_name=self.library_name)
         _, c_analog, c_analog_min, c_analog_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                                                 return_average=True, global_mean=True, prediction_dict=self.prediction_dict,max_year=max_year)
+                                                                 return_average=True, global_mean=True, prediction_dict=self.prediction_dict,max_year=max_year,
+                                                                 library_name=self.library_name)
         # now make the plot
         fig, ax = plt.subplots(1, 1, figsize=(14,5))
         # plot the range of all the best analogs (unconstrained)
@@ -576,7 +580,7 @@ class PlotAnalogs():
 
         # get the analog prediction
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, global_mean=True, return_average=False)
+                                         prediction_dict=self.prediction_dict, global_mean=True, return_average=False, library_name=self.library_name)
         analog = analog.query(time=query_text)
         # get the full range of analog predictions
         all_min, all_max = ba.get_full_analog_range(self.experiment_name, self.prediction_dict, self.soi_model, self.soi_member, self.variable, global_mean=True)

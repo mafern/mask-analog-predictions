@@ -1,4 +1,3 @@
-import time
 import numpy as np
 import silence_tensorflow.auto
 import tensorflow as tf
@@ -31,9 +30,6 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
 # -------------------------------------------------------------------------------
 
 def train_model(settings, model, analog_input, analog_output, soi_train_input, soi_train_output, soi_val_input, soi_val_output, overwrite_model=False):
-    """
-    
-    """
     experiment_name = settings['experiment_name']
     # check if model already exists or overwrite is on
     if not (os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_weights.h5")) and os.path.exists(os.path.join(os.path.dirname(__file__), 'saved_models', experiment_name, experiment_name+"_model"))) or overwrite_model is True:
@@ -65,11 +61,10 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
         # else:
         #     loss = settings["loss_f"]
         ###################################################################################
-        
         loss = settings["loss"]
 
         # COMPILE THE MODEL
-        model.compile(loss=loss, optimizer=optimizer, metrics=[metrics.pred_range,],)
+        model.compile(loss=loss, optimizer=optimizer)#, metrics=[metrics.pred_range,],)
 
         # continuosly returns batch_size number of soi and analog inputs (features),
         # along with their target absolute differences (labels)
@@ -140,12 +135,10 @@ def save_model_run(model, settings):
 
     Arguments
     ---------
-
     model : tensorflow.keras.models.Model
 
     settings : dict
         Dictionary of experiment settings for the run.
-        
     """
     experiment_name = settings['experiment_name']
     # Save the model, weights, and history.

@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as clr
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from pprint import pprint
 
 # define cmap for masks and some colors
 c_energygreen = '#CFFC00'
@@ -85,6 +84,7 @@ class Experiments():
 
     def delete_experiment(self, exp_name):
         "delete an experiment from the main file, does not delete from any backups"
+        assert type(exp_name) == str, "pass a single experiment name"
         self.experiments.pop(exp_name)
         with open(self.filename, "w") as exp_file:
             exp_file.write(json.dumps(self.experiments))
@@ -112,7 +112,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=None, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, method='jacob', mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=4, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, method='jacob', mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -129,7 +129,7 @@ class Experiments():
                 - target_var: variable to predict (if None, use the first entry of the variable_list)
                 - window: calculate rolling mean over this number of steps (default is no windowing)
                 - trajectory: number of time steps over which to match for training (default is 1, which is matching on input time only)
-                - resolutions: resample spatial grid of data, either to coarsest resolution amongst models (pass None, default), to a specified resolution (pass a list [lat_res, lon_res]), or do nothing (pass False)
+                - resolutions: resample spatial grid of data to a specified resolution: either pass 0-4 (high to low resolution) or pass a list [lat_res, lon_res]
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
                 - norm_data: whether to normalize the data by its mean and std (default is True)
                 - baseline: normalize the datasets by a baseline period (pass a list of a start and end year for the baseline, e.g. [1951, 1980]) or do nothing (pass False, default)
@@ -184,18 +184,18 @@ class Experiments():
                                "mask_data(experiment_settings['mask'])": mask,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "window_time(experiment_settings['window'])": window,
-                               "shift_inout_time(-experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
-                               "norm_data()": norm_data}
+                               "norm_data()": norm_data,
+                               "shift_inout_time(-experiment_settings['leadtime'])": leadtime}
         
         target_process_dict = {"sync_time(experiment_settings['time_range'])": time_range,
                                "mask_data(experiment_settings['mask'])": mask,
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "window_time(experiment_settings['window'])": window,
-                               "shift_inout_time(experiment_settings['leadtime'])": leadtime,
                                "remove_trend()": remove_trend,
-                               "norm_data()": norm_data}
+                               "norm_data()": norm_data,
+                               "shift_inout_time(experiment_settings['leadtime'])": leadtime}
         
         # make the processing list for the input data
         inputs_proc_steps = []
@@ -346,8 +346,6 @@ class Experiments():
         weighted_mask = weighted_mask * land_ocean_mask
         # Re-scale so the mean weight is 1
         weighted_mask = weighted_mask / np.nansum(weighted_mask) * np.nansum(land_ocean_mask)
-        # Set masked values to the 0
-        # weighted_mask = np.nan_to_num(weighted_mask)
         return weighted_mask
     
     # -------------------------------------------------------------------------------
@@ -387,7 +385,10 @@ class Experiments():
     def make_mask_gif(self, experiment_name, cmap=blue_cmap):
         import imageio
         # get mask
-        mask = self.make_mask(experiment_name)
+        try:
+            mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc')).squeeze()
+        except:
+            mask = self.make_mask(experiment_name)
         # get the files for this experiment
         mask_training_epochs_path = os.path.join(os.path.dirname(__file__), 'figures', experiment_name+'/mask_training')
         frames = np.loadtxt(mask_training_epochs_path).reshape(-1, mask.lat.size, mask.lon.size)
@@ -512,7 +513,7 @@ class Experiments():
     @property
     def list_variables(self):
         resolution_dictionary = {
-            'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0],
+            'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0]
             }
 
         models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))

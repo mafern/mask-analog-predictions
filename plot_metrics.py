@@ -9,8 +9,6 @@ import metrics
 import copy
 import bottleneck as bn
 
-# TODO: add some extremes plots
-
 # define some colors and cmaps -- csu and nuggets
 c_flowertrial = '#E56A54'
 c_horsetooth = '#008FB3'
@@ -50,7 +48,7 @@ class PlotMetrics():
     """
     Class for plotting analog metrics for a given SOI.
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, fig_path=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, fig_path=None):
         if fig_path is None:
             fig_path = 'figures/'+experiment_name+'/'
         self.fig_path = fig_path
@@ -64,7 +62,8 @@ class PlotMetrics():
         # get the settings so the region name can be used in the figure
         self.settings = rexp.Experiments().get_experiment(self.experiment_name)
         self.leadtime = self.settings['leadtime']
-        self.metrics = metrics.AnalogMetrics(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable)
+        self.metrics = metrics.AnalogMetrics(self.experiment_name, self.soi_model, self.soi_member, self.tether,
+                                             self.variable, library_name=library_name)
         self.predictions = ["analog", "model", "perfect"]
 
 # -------------------------------------------------------------------------------
@@ -871,38 +870,6 @@ class PlotMetrics():
         else:
             plt.savefig(self.fig_path+savename, dpi=400, bbox_inches='tight', pad_inches=0.1)
         plt.show()
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-
-
 
 # -------------------------------------------------------------------------------
 

@@ -103,7 +103,7 @@ def process_data(experiment_settings):
     outputs:
         - processed datasets for this experiment
     """
-    # analog, training, validation splits, a dictionary with keys: 'analog', 'training', 'validation'
+    # analog, training, validation splits (process in reverse of this order)
     split = experiment_settings['split']
     # set up local version of model/member dictionary, allows random selection of members without repeating
     model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
@@ -113,7 +113,7 @@ def process_data(experiment_settings):
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
     # for each of the split sets (analog, training, validation)
-    for split_set in split.keys():
+    for split_set in list(split.keys())[::-1]:
         # list of models to use for the analog set, training, and validation sets
         if split_set == 'analog':
             model_list = experiment_settings['analog_models']
@@ -159,7 +159,7 @@ def process_data(experiment_settings):
         # add processed data to the current_data dictionary, but first flatten models and variables into single DataSet
         for var in experiment_settings["variable_list"]:
             # preserve the model of each member for downstream use
-            for model in model_list:
+            for model in input_raw.data_dictionary[var].keys():
                 used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
                 # make a list of the model name repeating for the number of members
                 repeat_model = [model] * split[split_set]
@@ -186,13 +186,16 @@ def process_data(experiment_settings):
 
         # repeat for output
         target_var = experiment_settings['target_var'][0]
-        for model in model_list:
+        for model in output_raw.data_dictionary[target_var].keys():
+            used_members = np.setdiff1d(model_member_dict[model], output_raw.model_member_dict[model])
+            # make a list of the model name repeating for the number of members
+            repeat_model = [model] * split[split_set]
             output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(member=(used_members))
             output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(model=('member', repeat_model))
         current_data["target"][target_var] = xr.concat([output_raw.data_dictionary[target_var][model] for model in output_raw.data_dictionary[target_var].keys()],
                                                         dim="member", coords="minimal")
         # load in the target dataset
-        current_data["target"] = current_data["target"][experiment_settings['target_var'][0]] 
+        current_data["target"] = current_data["target"][experiment_settings['target_var'][0]]
 
         # if a land or ocean mask was used, carry that over
         if experiment_settings['mask']:
@@ -202,11 +205,11 @@ def process_data(experiment_settings):
             
         # re-type the data to 32 bit
         current_data['inputs'] = current_data['inputs'].assign_coords(lat=current_data['inputs']['lat'].astype(FLOAT_TYPE),
-                                                                        lon=current_data['inputs']['lon'].astype(FLOAT_TYPE),
-                                                                        member=current_data['inputs']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+                                                                      lon=current_data['inputs']['lon'].astype(FLOAT_TYPE),
+                                                                      member=current_data['inputs']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
         current_data['target'] = current_data['target'].assign_coords(lat=current_data['target']['lat'].astype(FLOAT_TYPE),
-                                                                        lon=current_data['target']['lon'].astype(FLOAT_TYPE),
-                                                                        member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
+                                                                      lon=current_data['target']['lon'].astype(FLOAT_TYPE),
+                                                                      member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
         
         # update dictionary to return
         processed_data[split_set] = current_data
@@ -235,7 +238,9 @@ def neural_network_stack(dataset, settings):
     inputs = inputs.drop('time').stack(sample=['time', 'member']).isel(trajectory=0)
 
     # drop NaNs
-    good_inds = np.where(~np.isnan(inputs.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[0]
+    bad_inds_inputs = np.where(np.isnan(inputs.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[0]
+    bad_inds_target = np.where(np.isnan(target.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[1]
+    good_inds = np.setdiff1d(np.arange(inputs.sample.size), np.unique(list(bad_inds_inputs) + list(bad_inds_target)))
     inputs = inputs.isel(sample=good_inds)
     target = target.isel(sample=good_inds)
 
@@ -287,7 +292,7 @@ def combine_ncs(directory, delete_old=False):
 
 # -------------------------------------------------------------------------------
 
-def combine_hist_ssp(directory, delete_old=False, grid='gn'):
+def combine_hist_ssp(directory, delete_old=False, grid='gn', ssp_name='ssp370'):
     """
     combine multiple historical and ssp subfiles into a single nc spanning the full time range.
     assumes that the filenames allow for sorting in the right order, and that
@@ -296,26 +301,29 @@ def combine_hist_ssp(directory, delete_old=False, grid='gn'):
     # get the files from the requested directory
     files = np.sort(glob.glob(os.path.join(directory, '*')))
     # get a list of the member ids without the dates to identify matching historical and ssp runs
-    mem_ids = np.array([file[file.find('_r')+1:file.find('_'+grid)] for file in files])
+    mem_ids = np.array([file[:file.find('_'+grid)] for file in files])
     # go through each file and find match, concatenate, save, optionally delete separate files
     for ii, file in enumerate(files):
         if 'historical' in file:
-            non_ii_inds = np.setdiff1d(np.arange(mem_ids.size), ii)
-            # add one since we remove the current index above (it's ok, we are always looking forward)
-            ssp_ind = np.where(mem_ids[ii] == mem_ids[non_ii_inds])[0] + 1
-            if np.size(ssp_ind) != 0:
+            # find matching ssp, if it exists
+            ssp_memid = mem_ids[ii].replace('historical', ssp_name)
+            ssp_ind = np.where(mem_ids == ssp_memid)[0]
+            # only if there is a single match (single historical to single ssp)
+            # this should only be used after the historical and ssp times have been combined separately
+            # (using the combine_ncs function above)
+            if np.size(ssp_ind) == 1:
                 # now load the two datasets
-                hist = xr.load_dataset(files[ii])
+                hist = xr.load_dataset(file)
                 ssp = xr.load_dataset(files[ssp_ind][0])
                 combined = xr.concat([hist, ssp], dim='time')
                 # get the file name
                 fname_start = files[ssp_ind][0][:-16]
-                fname_mid = files[ii][-16:-9]
+                fname_mid = file[-16:-9]
                 fname_end = files[ssp_ind][0][-9:]
                 # save the combined file
                 combined.to_netcdf(path=fname_start+fname_mid+fname_end)
                 if delete_old:
-                    os.remove(files[ii])
+                    os.remove(file)
                     os.remove(files[ssp_ind][0])
 
 # -------------------------------------------------------------------------------

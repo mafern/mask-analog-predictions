@@ -1,4 +1,3 @@
-import xarray as xr
 import tensorflow as tf
 import metrics
 import os
@@ -140,10 +139,6 @@ def make_prediction_model(prediction_model_nodes, prediction_model_act, rng_seed
 # -------------------------------------------------------------------------------
 
 def make_transfer_model(prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
-    """
-    """
-    ## updated prediction model (doesn't actually predict now though . . .)
-
     # input is mse, single-valued
     dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
     x = tf.keras.layers.Layer()(dissimilarity_input_layer)
@@ -236,10 +231,6 @@ def make_prediction_model_map(target_shape, prediction_model_nodes, prediction_m
 # -------------------------------------------------------------------------------
 
 def make_transfer_model_map(target_shape, prediction_model_nodes, prediction_model_act, rng_seed, output_activation="linear"):
-    """
-    """
-    ## updated prediction model (doesn't actually predict now though . . .)
-
     # input is mse, single-valued
     dissimilarity_input_layer = tf.keras.layers.Input(shape=(1,))
     x = tf.keras.layers.Layer()(dissimilarity_input_layer)
@@ -295,8 +286,6 @@ def make_transfer_model_map(target_shape, prediction_model_nodes, prediction_mod
 
 # Combining all three models
 def build_interp_model(settings, target_shape, x_train, transfer=None):
-    ""
-
     # model takes in soi and analog and returns weighted versions as well as weight mask
     mask_model, soi_input, analog_input = make_weights_model(x_train,
                                                              mask_model_act=settings["mask_activation"],

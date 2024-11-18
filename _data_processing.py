@@ -84,9 +84,17 @@ class DataProcessing():
             model_member_dict = deepcopy(self.model_member_dict)
             
             for model in model_list:
-                if type(n_members) == int:
+                nm = n_members
+                if type(nm) == int:
                     # check there are still enough members for this model when training
-                    assert np.size(model_member_dict[model]) >= n_members, ["more members requested than available. requested: " + str(n_members) + ", available: " + str(np.size(model_member_dict[model]))]
+                    if np.size(model_member_dict[model]) < nm:
+                        print("more members requested than available. requested: " + str(nm) + ", available: " + str(np.size(model_member_dict[model])))
+                        if np.size(model_member_dict[model]) == 0:
+                            print('skipping', model)
+                            continue
+                        else:
+                            print('using', np.size(model_member_dict[model]), 'members from', model)
+                            nm = np.size(model_member_dict[model])
                 
                 # file path for this variable and model
                 file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
@@ -99,13 +107,13 @@ class DataProcessing():
                 # get all files of this model and variable
                 file_list = np.sort(glob.glob(os.path.join(file_path, '*')))
 
-                if type(n_members) is list:
+                if type(nm) is list:
                     # members have already been chosen (e.g. best_analogs process_new_data)
-                    used_members = n_members
+                    used_members = nm
                 else:
                     # generate randomly seeded choice object and randomly select members
                     rng_seed = np.random.default_rng(seed)
-                    used_members = np.sort(rng_seed.choice(model_member_dict[model], n_members, replace=False, shuffle=False))
+                    used_members = np.sort(rng_seed.choice(model_member_dict[model], nm, replace=False, shuffle=False))
                 # select those files
                 file_list = file_list[used_members]
 
@@ -117,7 +125,10 @@ class DataProcessing():
                     # if it does exist, just load it, otherwise continue with loading from raw_data
                     if os.path.exists(preprocessed_file):
                         print('found preprocessed data for', model)
+                        # remove height coordinate if it exists here
                         ensemble_list = xr.load_dataset(preprocessed_file).sel(member=used_members)
+                        if np.isin('height', list(ensemble_list._coord_names)):
+                            ensemble_list = ensemble_list.drop('height')
                         data_dictionary[variable][model] = ensemble_list
                     else:
                         print('no preprocessed data found for', model)
@@ -152,7 +163,7 @@ class DataProcessing():
                     np.min([ensemble_list.dropna(dim='time').time.max().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][1]])
                 ]
 
-                # if type(n_members) == int:
+                # if type(nm) == int:
                 # update model_member_dict to remove these members for later splits
                 model_member_dict[model] = np.setdiff1d(model_member_dict[model], used_members)
 
@@ -241,7 +252,6 @@ class DataProcessing():
             - shift: the number of entries to remove.
             negative values remove shift entries from the end (adding a lag, for input),
             positive values remove shift entries from the start (adding a lead, for target).
-            - window: the window over which the target is being averaged.
         outputs:
             - shifted data_dictionary.
         """
@@ -424,7 +434,7 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     # ------------------- remove_trend, norm_data, baseline_norm --------------------
 
-    def remove_trend(self, fit=None, trend_dictionary=False):
+    def remove_trend(self, fit=None, trend_dictionary=True):
         """
         remove the long term trend from the data, either by ensemble mean, or a fit.
         
