@@ -12,6 +12,9 @@ logging.disable(logging.WARNING)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.get_logger().setLevel('ERROR')
 
+FLOAT_TYPE = np.float32
+INT_TYPE = np.int32
+
 def batch_generator(settings, soi_input, soi_output, analog_input, analog_output, batch_size, rng_seed=33):
     ""
     # random seed to select random subsets of the soi and analog sets
@@ -21,10 +24,7 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         # random subsamples of size batch_size
         i_soi = rng.choice(np.arange(0, soi_input.shape[0]), batch_size, replace=True)
         i_analog = rng.choice(np.arange(0, analog_input.shape[0]), batch_size, replace=True)
-        if settings['method'] == 'jacob':
-            targets = np.mean(np.mean(np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4), axis=2), axis=1)
-        else:
-            targets = np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4) # maps
+        targets = np.mean(np.mean(np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4), axis=2), axis=1)
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
 # -------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
                 if not os.path.exists(self.savepath):
                     os.makedirs(self.savepath)
             def on_epoch_begin(self, epoch, logs=None):
-                current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy()
+                current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy().astype(FLOAT_TYPE)
                 self.mask_training.append(current_mask)
             def on_train_end(self, logs=None):
                 final_epoch = earlystopping.stopped_epoch - settings['patience'] + 1

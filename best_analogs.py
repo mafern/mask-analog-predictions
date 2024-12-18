@@ -45,8 +45,8 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
 
     # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
-    if "global" in soi_model or "regional" in soi_model or "addregional" in soi_model:
-        # return the experiment name without the "global", "regional", or "addregional" suffix
+    if "global" in soi_model or "regional" in soi_model:
+        # return the experiment name without the "global" or "regional" suffix
         suffix_ind = soi_model[::-1].find('_')
         soi_model = soi_model[:-(suffix_ind+1)]
     soi_index = np.where((prediction_dict['target'].model == soi_model) &
@@ -88,9 +88,11 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         best_inds, order = np.where(best_samples.isel(time=ii))
         best_inds = best_inds[np.argsort(order)]
         if ii == 0:
-            soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
+            # soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
+            soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime]),'init_time': ("time", list(analog_indices['soi_time'][ii:ii+1].data))})
         else:
-            soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
+            # soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
+            soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime]),'init_time': ("time", list(analog_indices['soi_time'][ii:ii+1].data))})], dim='time')
     # now convert to global mean if requested (predictions)
     if global_mean:
         soi_prediction = soi_prediction.weighted(weights).mean(("lon", "lat"), skipna=True)
@@ -101,10 +103,10 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
 
     # return either the average of the analogs, or all of them still separated
     if return_average:
-        # get the average of the analogs, if requested
-        # TODO: weighted mean option as power law?
-        if rank_alpha is None:
-            soi_prediction = soi_prediction.mean('sample', skipna=True)
+        # weight the analogs, if requested
+        if type(rank_alpha) is float:
+            analog_weights = 1/(np.arange(n_analogs) + 1).reshape(1, -1)
+            soi_prediction = (soi_prediction * analog_weights**rank_alpha).mean('sample', skipna=True) / np.mean(analog_weights**rank_alpha, axis=1)
         else:
             soi_prediction = soi_prediction.mean('sample', skipna=True)
 
@@ -384,7 +386,12 @@ class BestAnalogs():
             analogs = weighted_analogs[var].to_numpy()
             soi = weighted_soi.expand_dims('placeholder').transpose('trend', 'placeholder', 'lat', 'lon')[var].to_numpy()
             # calculate mse and sort by this
-            mse += np.mean(bn.nanmean(bn.nanmean((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
+            if np.product(analogs.shape) < 2.5e9: # size of matrix is small enough to broadcast
+                mse += np.mean(bn.nanmean(bn.nanmean((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
+            else:
+                # for each tether -- reduce matrix size
+                for tt in range(np.shape(soi)[0]):
+                    mse += bn.nanmean(bn.nanmean((analogs[tt] - soi[tt])**2, axis=2), axis=1) * weights[tt]
         best_samples = np.argsort(mse)
 
         # keep only the last time in the trend -- the actual map to predict from
@@ -396,7 +403,7 @@ class BestAnalogs():
             data_vars=dict(
                 best_input_times=(["time", "analogs"], weighted_analogs.time[best_samples].data.reshape(1, -1)),
                 best_input_members=(["time", "analogs"], weighted_analogs.member[best_samples].data.reshape(1, -1).astype(INT_TYPE)),
-                best_input_models=(["time", "analogs"], weighted_analogs.model[best_samples].data.reshape(1, -1))
+                best_input_models=(["time", "analogs"], weighted_analogs.model[best_samples].data.reshape(1, -1)),
             ),
             coords=dict(
                 soi_time=("time", list(weighted_soi.time[-1:].data))
@@ -425,30 +432,22 @@ class BestAnalogs():
             leadtime = self.leadtime
 
         mask_object = self.mask_object
+        vars = list(self.prediction_dict['inputs'].data_vars)
         # remove mask values below some quantile threshhold
         if quant is not None:
             quant_mask = self.mask_object.quantile(quant)
             mask_object = mask_object.where(mask_object >= quant_mask, 0)
         # use a global 1s mask or a regional 1s mask
         if mask_type == 'global':
-            mask_object = mask_object.where(mask_object < -9999, 1)
+            mask_object = mask_object.where(mask_object < -9999, 1).astype(FLOAT_TYPE)
         elif mask_type == 'regional':
-            mask_object = ((mask_object.lat <= self.prediction_dict['target'].lat.max())
-                           * (mask_object.lat >= self.prediction_dict['target'].lat.min())
-                           * (mask_object.lon <= self.prediction_dict['target'].lon.max())
-                           * (mask_object.lon >= self.prediction_dict['target'].lon.min())).astype(int)
-        elif mask_type == 'addregional':
-            # match based on both the learned mask and a regional mask
-            vars = list(self.prediction_dict['inputs'].data_vars)
-            regional_mask = ((mask_object.lat <= self.prediction_dict['target'].lat.max())
-                             * (mask_object.lat >= self.prediction_dict['target'].lat.min())
-                             * (mask_object.lon <= self.prediction_dict['target'].lon.max())
-                             * (mask_object.lon >= self.prediction_dict['target'].lon.min()))
-            max_mask_weight = 1 / np.sum(regional_mask)
-            regional_mask = regional_mask.where(~regional_mask, max_mask_weight)
-            mask_object = xr.merge([mask_object] + [regional_mask.to_dataset(name=var+'_regional') for var in vars])
-            regional_copy = self.prediction_dict['inputs'].copy()
-            self.prediction_dict['inputs'] = xr.merge([self.prediction_dict['inputs'], regional_copy.rename_vars({var: var+'_regional' for var in vars})])
+            mask_object = (
+                (mask_object.lat <= self.prediction_dict['target'].lat.max()) *
+                (mask_object.lat >= self.prediction_dict['target'].lat.min()) *
+                (mask_object.lon <= self.prediction_dict['target'].lon.max()) *
+                (mask_object.lon >= self.prediction_dict['target'].lon.min())
+                ).astype(FLOAT_TYPE)
+            mask_object = xr.merge([mask_object.to_dataset(name=var) for var in vars])
         
         # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
         # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
@@ -480,16 +479,14 @@ class BestAnalogs():
         soi_inputs = soi_inputs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
         
         # weights for tethering
-        # TODO: determine best weighting scheme, use inverse quadratic for now (seemed best between these three)
-        # weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
-        # weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(np.float32)
-        weights = 1/(np.arange(tether, 0, -1)**2).reshape(-1, 1).astype(np.float32)
+        # tether_weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
+        tether_weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(np.float32)
 
         for ii in range(soi_inputs.dims['sample']):
             if ii == 0:
-                soi_ds = self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, weights])
+                soi_ds = self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])
             else:
-                soi_ds = xr.concat([soi_ds, self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, weights])], dim='time')
+                soi_ds = xr.concat([soi_ds, self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])], dim='time')
 
         # save it now
         with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=3) as filename:

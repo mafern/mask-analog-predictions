@@ -10,7 +10,7 @@ INT_TYPE = np.int32
 
 # -------------------------------------------------------------------------------
 
-def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False):
+def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False, res_check=True):
     """
     spatially and temporally smooth the requested data and save;
     will ignore models that require upsampling based on the resolution
@@ -35,7 +35,7 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
         # check that the resolution of this model is not smaller than requested -- if so, skip
         # (do not want to downscale at this point, perhaps in the future)
         model_res_dict = get_model_res_dictionary(scratch=scratch)
-        if np.any(np.array(model_res_dict[model]) > np.array(resolution)):
+        if res_check and np.any(np.array(model_res_dict[model]) > np.array(resolution)):
             print("requested resolution would require downscaling, skipping", model)
             continue
 
@@ -113,7 +113,7 @@ def process_data(experiment_settings):
     # initialize dictionary that will be returned at the end of processing
     processed_data = {}
     # for each of the split sets (analog, training, validation)
-    for split_set in list(split.keys())[::-1]:
+    for split_set in list(split.keys()):
         # list of models to use for the analog set, training, and validation sets
         if split_set == 'analog':
             model_list = experiment_settings['analog_models']
@@ -162,7 +162,7 @@ def process_data(experiment_settings):
             for model in input_raw.data_dictionary[var].keys():
                 used_members = np.setdiff1d(model_member_dict[model], input_raw.model_member_dict[model])
                 # make a list of the model name repeating for the number of members
-                repeat_model = [model] * split[split_set]
+                repeat_model = [model] * np.size(used_members)
                 # add the member indices as a coordinate
                 input_raw.data_dictionary[var][model] = input_raw.data_dictionary[var][model].assign_coords(member=(used_members))
                 # and add the models as a coordinate
@@ -189,7 +189,7 @@ def process_data(experiment_settings):
         for model in output_raw.data_dictionary[target_var].keys():
             used_members = np.setdiff1d(model_member_dict[model], output_raw.model_member_dict[model])
             # make a list of the model name repeating for the number of members
-            repeat_model = [model] * split[split_set]
+            repeat_model = [model] * np.size(used_members)
             output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(member=(used_members))
             output_raw.data_dictionary[target_var][model] = output_raw.data_dictionary[target_var][model].assign_coords(model=('member', repeat_model))
         current_data["target"][target_var] = xr.concat([output_raw.data_dictionary[target_var][model] for model in output_raw.data_dictionary[target_var].keys()],
@@ -222,7 +222,6 @@ def process_data(experiment_settings):
 
 def neural_network_stack(dataset, settings):
     "stack datasets for neural network, final shape is [samples (times x members), lat, lon, channels]"
-    # replace NaNs with zeros
     inputs = dataset['inputs']
     target = dataset['target']
 

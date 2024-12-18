@@ -26,10 +26,7 @@ def pred_range(y_true, y_pred):
 # -------------------------------------------------------------------------------
 
 def get_target_error(settings, soi, analog):
-    if settings['method'] == 'jacob':
-        target = get_analog_errors_sq(soi, analog)
-    else:
-        target = get_analog_errors_abs(soi, analog)
+    target = get_analog_errors_sq(soi, analog)
     return target
 
 # -------------------------------------------------------------------------------
@@ -144,15 +141,19 @@ class AnalogMetrics():
     """
     Class for calculating performance of analog predictions
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, soi_signature=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, soi_signature=None, leadtime=None, rank_alpha=None):
         # save the experiment_name and other useful variables
         self.experiment_name = experiment_name
         self.soi_model = soi_model
         self.soi_member = soi_member
         self.variable = variable
         self.tether = tether
-        settings = rexp.Experiments().get_experiment(self.experiment_name)
-        self.leadtime = settings['leadtime']
+        self.rank_alpha = rank_alpha
+        if leadtime is None:
+            settings = rexp.Experiments().get_experiment(self.experiment_name)
+            self.leadtime = settings['leadtime']
+        else:
+            self.leadtime = leadtime
         self.library_name = library_name
         # assemble the prediction dictionary
         try:
@@ -176,7 +177,7 @@ class AnalogMetrics():
         self.analog_library = get_non_soi_analogs(self.prediction_dict, soi_model, soi_member, variable, global_average=False)
         self.truth, _, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, 1, self.variable, 1,
                                              prediction_dict=self.prediction_dict, soi_signature=self.soi_signature,
-                                             library_name=library_name)
+                                             library_name=library_name, leadtime=self.leadtime)
         # keep only the times where the analog prediction, library, and truth overlap (and account for tether length)
         self.perfect_analogs = self.perfect_analogs[self.leadtime+self.tether-1:]
         self.analog_library = self.analog_library.unstack()[..., self.leadtime+self.tether-1:].transpose("time", "lat", "lon", "member")
@@ -196,7 +197,8 @@ class AnalogMetrics():
 
         # get the targets for the requested soi and variable, as well as the prediction (maps)
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name,
+                                         leadtime=self.leadtime, rank_alpha=self.rank_alpha)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
         
@@ -238,7 +240,7 @@ class AnalogMetrics():
             # return the std across analogs for the prediction
             _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
                                              prediction_dict=self.prediction_dict, return_average=False, soi_signature=self.soi_signature,
-                                             library_name=self.library_name)
+                                             library_name=self.library_name, leadtime=self.leadtime)
             # align analog prediction with analog library and truth
             analog = analog[:-self.leadtime]
             analog_spread = analog.var("sample", skipna=True).sel(time=time_slice)
@@ -276,7 +278,8 @@ class AnalogMetrics():
 
         # get the targets for the requested soi and variable
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name,
+                                         leadtime=self.leadtime, rank_alpha=self.rank_alpha)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
 
@@ -322,7 +325,8 @@ class AnalogMetrics():
             time_slice = slice("0000", "9999")
 
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name,
+                                         leadtime=self.leadtime, rank_alpha=self.rank_alpha)
         # align analog prediction with analog library and truth
         analog = analog[:-self.leadtime]
 
@@ -385,7 +389,7 @@ class AnalogMetrics():
         # get truth, prediction, and analog library
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
                                          prediction_dict=self.prediction_dict, return_average=False, soi_signature=self.soi_signature,
-                                         library_name=self.library_name)
+                                         library_name=self.library_name, leadtime=self.leadtime)
         # align truth, analog prediction, perfect analogs, and analog library time range
         analog = analog[:-self.leadtime].sel(time=time_slice)
         non_soi_analogs = self.analog_library.sel(time=time_slice)
@@ -404,16 +408,16 @@ class AnalogMetrics():
         
         if prediction == "model":
             # models sorted along member axis, shape: time x lat x lon x member
-            model_cdfx = np.transpose(np.sort(non_soi_analogs, axis=1), (0, 3, 1, 2))
+            model_cdfx = np.sort(non_soi_analogs, axis=3)
             # flattened version for simplicity
-            flat_model = model_cdfx.reshape(non_soi_analogs.member.size, -1)
+            flat_model = model_cdfx.reshape(-1, non_soi_analogs.member.size)
             # cdf values
             model_cdfy = np.linspace(0, 1, non_soi_analogs.member.size)
             # get interpolated cdf, avoiding nans
             non_nan_model = np.isfinite(flat_model)
-            model_interp = [np.interp(interp_x, flat_model[np.where(non_nan_model[:, ii])[0], ii], model_cdfy[np.where(non_nan_model[:, ii])[0]]) for ii in range(time_x_map_size)]
-            model_interp = np.array(model_interp).reshape(truth.shape + (-1,))
-            # crps values, shape: time x lat x lon
+            model_interp = [np.interp(interp_x, flat_model[ii, np.where(non_nan_model[ii])[0]], model_cdfy[np.where(non_nan_model[ii])[0]]) for ii in range(time_x_map_size)]
+            model_interp = np.array(model_interp).reshape(model_cdfx.shape[:3] + (-1,))
+            # crps values, shape: lat x lon x time
             model_crps = np.nansum((model_interp - interp_step)**2 * dx, axis=-1)
             if map:
                 crps = bn.nanmean(model_crps, axis=0)
@@ -429,14 +433,15 @@ class AnalogMetrics():
                     crps = bn.nanmean(bn.nanmean(np.abs(truth.data - analog.data), axis=2), axis=1)
                 return crps
             else:
-                # sorted along analog axis, shape: time x lat x lon x analog
-                pred_cdfx = np.transpose(np.sort(analog, axis=1), (0, 3, 1, 2))
-                flat_pred = pred_cdfx.reshape(n_analogs, -1)
+                # sorted along analog axis, current shape: time x lat x lon x analog
+                pred_cdfx = np.sort(analog, axis=3)
+                # new shape: time x analog x lat x lon
+                flat_pred = pred_cdfx.reshape(-1, n_analogs)
                 pred_cdfy = np.linspace(0, 1, n_analogs)
                 # get interpolated cdf, avoiding nans
                 non_nan_pred = np.isfinite(flat_pred)
-                pred_interp = [np.interp(interp_x, flat_pred[np.where(non_nan_pred[:, ii])[0], ii], pred_cdfy[np.where(non_nan_pred[:, ii])[0]]) for ii in range(time_x_map_size)]
-                pred_interp = np.array(pred_interp).reshape(truth.shape + (-1,))
+                pred_interp = [np.interp(interp_x, flat_pred[ii, np.where(non_nan_pred[ii])[0]], pred_cdfy[np.where(non_nan_pred[ii])[0]]) for ii in range(time_x_map_size)]
+                pred_interp = np.array(pred_interp).reshape(pred_cdfx.shape[:3] + (-1,))
                 # crps values, shape: time x lat x lon
                 pred_crps = np.nansum((pred_interp - interp_step)**2 * dx, axis=-1)
                 if map:
@@ -466,7 +471,8 @@ class AnalogMetrics():
 
         # get analog prediction, truth, library
         _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name)
+                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name,
+                                         leadtime=self.leadtime, rank_alpha=self.rank_alpha)
         # align truth, analog prediction, perfect analogs, and library
         analog = analog[:-self.leadtime].sel(time=time_slice)
         truth = self.truth.sel(time=time_slice)

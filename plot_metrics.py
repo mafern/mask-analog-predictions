@@ -48,7 +48,7 @@ class PlotMetrics():
     """
     Class for plotting analog metrics for a given SOI.
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, fig_path=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, leadtime=None, library_name=None, fig_path=None):
         if fig_path is None:
             fig_path = 'figures/'+experiment_name+'/'
         self.fig_path = fig_path
@@ -61,9 +61,12 @@ class PlotMetrics():
         self.tether = tether
         # get the settings so the region name can be used in the figure
         self.settings = rexp.Experiments().get_experiment(self.experiment_name)
-        self.leadtime = self.settings['leadtime']
+        if leadtime is None:
+            self.leadtime = self.settings['leadtime']
+        else:
+            self.leadtime = leadtime
         self.metrics = metrics.AnalogMetrics(self.experiment_name, self.soi_model, self.soi_member, self.tether,
-                                             self.variable, library_name=library_name)
+                                             self.variable, library_name=library_name, leadtime=self.leadtime)
         self.predictions = ["analog", "model", "perfect"]
 
 # -------------------------------------------------------------------------------

@@ -112,7 +112,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=4, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, method='jacob', mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=4, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -136,7 +136,6 @@ class Experiments():
                 - remove_trend: whether to remove the trend via the ensemble mean (pass True) or do nothing (pass False, default)
                 - norm_weights: whether to normalize the mask weights, default is True
                 - transfer_exp: experiment name (string) from which to transfer learn (initializes mask, layers, or both, depending on training inputs)
-                - method: which method to use, 'jacob' (input mse predicts target mse) or 'martin' (input mse predicts target map, loss is mse)
                 - mask: whether to mask land (pass 'land'), ocean (pass 'ocean'), or neither (pass False, default)
                 - prediction_nodes: a list where the number of entries is the number of layers, and the values are the number of nodes for that layer
                 - prediction_activation: activation function used for the network
@@ -271,7 +270,7 @@ class Experiments():
         tf.random.set_seed(experiment_settings["seed"])
 
         # build the full model for learning the mask: mask, dissimilarity, prediction models
-        model, _, _, _ = build_model.build_interp_model(experiment_settings, np.shape(training_target)[1:], [training_inputs, analog_inputs], transfer=transfer)
+        model, _, _, _ = build_model.build_interp_model(experiment_settings, [training_inputs, analog_inputs], transfer=transfer)
 
         # train the model, which will check if the model is already saved first
         # (then load if it does, train and save if it does not)
