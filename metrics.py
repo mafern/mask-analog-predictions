@@ -141,7 +141,7 @@ class AnalogMetrics():
     """
     Class for calculating performance of analog predictions
     """
-    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, soi_signature=None, leadtime=None, rank_alpha=None):
+    def __init__(self, experiment_name, soi_model, soi_member, tether, variable, library_name=None, prediction_dict=None, soi_signature=None, leadtime=None, rank_alpha=None):
         # save the experiment_name and other useful variables
         self.experiment_name = experiment_name
         self.soi_model = soi_model
@@ -157,7 +157,9 @@ class AnalogMetrics():
         self.library_name = library_name
         # assemble the prediction dictionary
         try:
-            self.prediction_dict = ba.BestAnalogs(experiment_name, library_name=library_name).prediction_dict
+            self.prediction_dict = prediction_dict
+            if self.prediction_dict is None:
+                self.prediction_dict = ba.BestAnalogs(experiment_name, library_name=library_name).prediction_dict
             self.soi_signature = soi_signature
             if soi_signature is None:
                 # get the soi savename corresponding to the requested soi_model, soi_member, and tether
