@@ -464,6 +464,7 @@ class DataProcessing():
                     # use fit degree polyfit on the ensemble mean
                     trend = self.data_dictionary[var][model].mean("member").polyfit(dim="time", deg=fit)
                     trend = xr.polyval(self.data_dictionary[var][model].time, trend)
+                    trend = trend.rename_vars({var+'_polyfit_coefficients': var})
                 else:
                     # print a note if using ensemble mean for trend with fewer than 10 members
                     if self.data_dictionary[var][model].member.size < 10:
