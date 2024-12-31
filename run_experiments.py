@@ -74,7 +74,7 @@ class Experiments():
         experiments = self.experiments.copy()
         for exp_name in new_exp:
             experiments[exp_name] = new_exp[exp_name]
-        with open(self.filename, "w") as exp_file:
+        with open(os.path.join(os.path.dirname(__file__), self.filename), "w") as exp_file:
             exp_file.write(json.dumps(experiments))
         # reload the experiments
         self.experiments = experiments
@@ -179,18 +179,18 @@ class Experiments():
         # get locals (i.e. all of the inputs to make_exp_dictionary) before assigning anything here
         function_inputs = locals()
         
-        inputs_process_dict = {"sync_time(experiment_settings['time_range'])": time_range,
-                               "mask_data(experiment_settings['mask'])": mask,
+        inputs_process_dict = {"mask_data(experiment_settings['mask'])": mask,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
+                               "sync_time(experiment_settings['time_range'])": time_range,
                                "window_time(experiment_settings['window'])": window,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data,
                                "shift_inout_time(-experiment_settings['leadtime'])": leadtime}
         
-        target_process_dict = {"sync_time(experiment_settings['time_range'])": time_range,
-                               "mask_data(experiment_settings['mask'])": mask,
+        target_process_dict = {"mask_data(experiment_settings['mask'])": mask,
                                "get_region(experiment_settings['region'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
+                               "sync_time(experiment_settings['time_range'])": time_range,
                                "window_time(experiment_settings['window'])": window,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data,
@@ -377,7 +377,8 @@ class Experiments():
             if colorbar:
                 cb = plt.colorbar(image, shrink=0.75, orientation="horizontal", pad=0.02)
             plt.savefig(self.fig_path+savename+'_'+var+'.png', dpi=400, bbox_inches='tight', pad_inches=0.1)
-            plt.show()
+            # plt.show()
+            plt.close()
 
     # -------------------------------------------------------------------------------
 
