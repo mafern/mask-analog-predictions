@@ -236,16 +236,27 @@ def neural_network_stack(dataset, settings):
     inputs = inputs.isel(time=traj_inds).transpose('time', 'member', 'lat', 'lon', 'trajectory')
     inputs = inputs.drop('time').stack(sample=['time', 'member']).isel(trajectory=0)
 
-    # drop NaNs
-    bad_inds_inputs = np.where(np.isnan(inputs.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[0]
-    bad_inds_target = np.where(np.isnan(target.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[1]
+    # drop NaNs across samples (when full map is nans)
+    bad_inds_inputs = np.where(np.isnan(inputs.mean(['lat', 'lon'], skipna=True).to_array()))[1]
+    bad_inds_target = np.where(np.isnan(target.mean(['lat', 'lon'], skipna=True).to_array()))[2]
     good_inds = np.setdiff1d(np.arange(inputs.sample.size), np.unique(list(bad_inds_inputs) + list(bad_inds_target)))
     inputs = inputs.isel(sample=good_inds)
     target = target.isel(sample=good_inds)
 
-    # stack time and members as samples, convert to numpy array with correct shape
+    # stack lat and lon as loc for target, drop NaNs for loc in target
+    # (keep only the target region, not necessarily a box)
+    target = target.stack(loc=["lat", "lon"]).dropna('loc')
+
+    # drop NaNs across samples (when any cell is nan)
+    bad_inds_inputs = np.where(np.isnan(inputs.mean(['lat', 'lon'], skipna=False).to_array().sum('variable', skipna=False)))[0]
+    bad_inds_target = np.where(np.isnan(target.mean(['loc'], skipna=False).to_array().sum('variable', skipna=False)))[1]
+    good_inds = np.setdiff1d(np.arange(inputs.sample.size), np.unique(list(bad_inds_inputs) + list(bad_inds_target)))
+    inputs = inputs.isel(sample=good_inds)
+    target = target.isel(sample=good_inds)
+
+    # convert to numpy array with correct shape
     inputs = inputs.to_array().transpose("sample", "lat", "lon", "variable").to_numpy()
-    target = target.to_array().transpose("sample", "lat", "lon", "variable", "trajectory").to_numpy()
+    target = target.to_array().transpose("sample", "loc", "variable", "trajectory").to_numpy()
     
     print('input and target datasets reshaped to', np.shape(inputs), 'and', np.shape(target))
     return inputs, target
