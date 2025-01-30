@@ -218,7 +218,7 @@ class BestAnalogs():
                     with gzip.open(analog_path+'/target.pickle', "wb") as filename:
                         pickle.dump(self.prediction_dict['target'], filename)
 
-        # get lat and lon
+        # get lat and lon (global)
         self.prediction_dict['lat'] = self.prediction_dict['inputs']['lat']
         self.prediction_dict['lon'] = self.prediction_dict['inputs']['lon']
         
