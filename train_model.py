@@ -24,7 +24,8 @@ def batch_generator(settings, soi_input, soi_output, analog_input, analog_output
         # random subsamples of size batch_size
         i_soi = rng.choice(np.arange(0, soi_input.shape[0]), batch_size, replace=True)
         i_analog = rng.choice(np.arange(0, analog_input.shape[0]), batch_size, replace=True)
-        targets = np.mean(np.mean(np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=4), axis=2), axis=1)
+        # target mse is mean over trajectory (3), loc (1)
+        targets = np.mean(np.mean(metrics.get_target_error(settings, soi_output[i_soi], analog_output[i_analog]), axis=3), axis=1)
         yield [soi_input[i_soi, :, :, :], analog_input[i_analog, :, :, :]], [targets]
 
 # -------------------------------------------------------------------------------
