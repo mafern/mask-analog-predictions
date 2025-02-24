@@ -88,10 +88,8 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         best_inds, order = np.where(best_samples.isel(time=ii))
         best_inds = best_inds[np.argsort(order)]
         if ii == 0:
-            # soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})
             soi_prediction = targets.isel(sample=best_inds).assign_coords({'time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime]),'init_time': ("time", list(analog_indices['soi_time'][ii:ii+1].data))})
         else:
-            # soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", list(analog_indices['soi_time'][ii:ii+1].data)),'pred_time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime])})], dim='time')
             soi_prediction = xr.concat([soi_prediction, targets.isel(sample=best_inds).assign_coords({'time': ("time", [analog_indices['soi_time.year'][ii].data+leadtime]),'init_time': ("time", list(analog_indices['soi_time'][ii:ii+1].data))})], dim='time')
     # now convert to global mean if requested (predictions)
     if global_mean:
@@ -262,7 +260,11 @@ class BestAnalogs():
         # load the new raw data
         for ii, model in enumerate(model_list):
             # glob all the files and sort -- just used to get correct indices
-            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, variables[0], '*')))
+            if 'max' in variables[0] or 'min' in variables[0]:
+                var0 = variables[0][:-3]
+            else:
+                var0 = variables[0]
+            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, var0, '*')))
             # remove indices corresponding to model/members that are in this models used_members
             model_used_members = self.used_members[np.where(self.used_models == model)]
             model_new_members = np.setdiff1d(np.arange(files.size), model_used_members)
