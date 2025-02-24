@@ -46,22 +46,6 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
 
         # LEARNING RATE
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=settings["learning_rate"])
-
-        ###################################################################################
-        # LOSS FUNCTION, INCLUDING SETTING HUBER LOSS DELTA PARAMETER
-        # if settings["loss_f"] == 'huber':
-        #     gen = batch_generator(settings,
-        #                           soi_train_input, soi_train_output,
-        #                           analog_input, analog_output, batch_size=2_500,
-        #                           rng_seed=settings["seed"]+4)
-        #     __, random_targets = next(gen)
-        #     gen.close()
-        #     huber_delta = np.percentile(random_targets[:], settings["percentile_huber_d"])
-        #     settings["huber_delta"] = huber_delta
-        #     loss = tf.keras.losses.Huber(delta=huber_delta,)
-        # else:
-        #     loss = settings["loss_f"]
-        ###################################################################################
         loss = settings["loss"]
 
         # COMPILE THE MODEL
