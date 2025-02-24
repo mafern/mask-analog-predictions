@@ -137,10 +137,10 @@ class PlotAnalogs():
         # restrict to specific time range, if requested
         if time_range is not None:
             time_slice = slice(time_range[0], time_range[1])
-            query_text = "pred_time >= " + time_range[0] + " & pred_time <= " + time_range[1]
+            query_text = "time >= " + time_range[0] + " & time <= " + time_range[1]
         else:
             time_slice = slice("0000", "9999")
-            query_text = "pred_time >= 0000 & pred_time <= 9999"
+            query_text = "time >= 0000 & time <= 9999"
 
         # get the targets for the requested soi and variable
         _, _, prediction_min, prediction_max = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
@@ -154,7 +154,7 @@ class PlotAnalogs():
         ax.fill_between(all_min['time.year'].sel(time=time_slice), all_min.sel(time=time_slice), all_max.sel(time=time_slice), color=c_skyline_ll,
                          alpha=0.33, label='model range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_skyline_l)])
         # plot the range of all the analogs
-        ax.fill_between(prediction_min.query(time=query_text)['pred_time'], prediction_min.query(time=query_text), prediction_max.query(time=query_text), color=c_sunshine,
+        ax.fill_between(prediction_min.query(time=query_text)['time'], prediction_min.query(time=query_text), prediction_max.query(time=query_text), color=c_sunshine,
                         alpha=0.3, label='analog range', path_effects=[patheffects.withStroke(linewidth=1, foreground=c_sunshine)])
         # plot the true values (i.e. the soi target)
         ax.plot(self.truth_mean.sel(time=time_slice)['time.year'], self.truth_mean.sel(time=time_slice), lw=0.75, c='white', label='truth',
