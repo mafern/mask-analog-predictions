@@ -23,7 +23,7 @@ c_stalwart = '#105456'
 blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
 blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
 
-res_options = [[0.9424083769633285, 1.25], [1.1120905585095784, 1.25], [1.3890301392687405, 1.40625], [1.8496375593391292, 1.875], [2.7672718509152645, 2.8125]]
+res_options = [[1.5, 1.5], [2.0, 2.0], [2.7672718509152645, 2.8125]]
 
 def get_settings(experiment_name):
     "helper to be consistent with existing code"
@@ -112,7 +112,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=4, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=2, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -129,7 +129,7 @@ class Experiments():
                 - target_var: variable to predict (if None, use the first entry of the variable_list)
                 - window: calculate rolling mean over this number of steps (default is no windowing)
                 - trajectory: number of time steps over which to match for training (default is 1, which is matching on input time only)
-                - resolutions: resample spatial grid of data to a specified resolution: either pass 0-4 (high to low resolution) or pass a list [lat_res, lon_res]
+                - resolutions: resample spatial grid of data to a specified resolution: either pass 0-2 (high to low resolution) or pass a list [lat_res, lon_res]
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
                 - norm_data: whether to normalize the data by its mean and std (default is True)
                 - baseline: normalize the datasets by a baseline period (pass a list of a start and end year for the baseline, e.g. [1951, 1980]) or do nothing (pass False, default)
