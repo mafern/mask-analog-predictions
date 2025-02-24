@@ -10,7 +10,7 @@ INT_TYPE = np.int32
 
 # -------------------------------------------------------------------------------
 
-def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False, res_check=True):
+def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False, res_check=True, stat=None):
     """
     spatially and temporally smooth the requested data and save;
     will ignore models that require upsampling based on the resolution
@@ -43,6 +43,8 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
         for var in var_list:
             # check if this combination of models, variables, and resolution has already been preprocessed
             preprocessed_folder = os.path.join(os.path.dirname(__file__), "processed_data", var+'_lat'+str(np.round(resolution[0], 2))+'_lon'+str(np.round(resolution[1], 2)))
+            if stat is not None:
+                preprocessed_folder = os.path.join(os.path.dirname(__file__), "processed_data", var+stat+'_lat'+str(np.round(resolution[0], 2))+'_lon'+str(np.round(resolution[1], 2)))
             # if the folder does not yet exist, create it
             if not os.path.exists(preprocessed_folder):
                 os.mkdir(os.path.join(os.path.dirname(__file__), "processed_data", preprocessed_folder))
@@ -61,7 +63,7 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
             print('preprocessing', files.size, var, 'members from model', model)
 
             # define the preprocessing steps
-            preprocess_steps = ["smooth_time()",
+            preprocess_steps = ["smooth_time(stat)",
                                 "smooth_space(resolution)"]
             # initialize the processing object, loads the data
             input_raw = _dp.DataProcessing([model], [var], list(np.arange(files.size)), 0, resolution, load_raw=True)
@@ -106,7 +108,7 @@ def process_data(experiment_settings):
     # analog, training, validation splits (process in reverse of this order)
     split = experiment_settings['split']
     # set up local version of model/member dictionary, allows random selection of members without repeating
-    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
+    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.min([np.size(glob.glob(raw_data_dir+f'/{var}/*')) for var in experiment_settings['variable_list']]))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
     
