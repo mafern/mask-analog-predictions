@@ -22,7 +22,7 @@ class DataProcessing():
         - seed: random seed for selection of members
         - resolution: resolution to use for members (also, where to look for presaved data)
         - model_member_dict: list of members for each model to help avoid using the same member twice
-        - load_raw: whether to load from raw monthly data if presaved data is not availablef
+        - load_raw: whether to load from raw monthly data if presaved data is not available
     outputs:
         - 
     """
@@ -44,7 +44,7 @@ class DataProcessing():
         self.resolution = resolution
         if model_member_dict is None:
             # save model_member_dict
-            model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.size(glob.glob(raw_data_dir+'/*/*'))/np.size(glob.glob(raw_data_dir+'/*')))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
+            model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.min([np.size(glob.glob(raw_data_dir+f'/{var}/*')) for var in variable_list]))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
         self.model_member_dict = model_member_dict
 
         # whether to load raw data or cancel if preprocessed is not found
@@ -95,18 +95,6 @@ class DataProcessing():
                         else:
                             print('using', np.size(model_member_dict[model]), 'members from', model)
                             nm = np.size(model_member_dict[model])
-                
-                # file path for this variable and model
-                file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
-                
-                # check that path exists, if not print warning and continue
-                if not os.path.exists(file_path):
-                    print('directory:', file_path, 'does not exist')
-                    print('continuing without this dataset')
-                    continue
-                # get all files of this model and variable
-                file_list = np.sort(glob.glob(os.path.join(file_path, '*')))
-
                 if type(nm) is list:
                     # members have already been chosen (e.g. best_analogs process_new_data)
                     used_members = nm
@@ -114,8 +102,6 @@ class DataProcessing():
                     # generate randomly seeded choice object and randomly select members
                     rng_seed = np.random.default_rng(seed)
                     used_members = np.sort(rng_seed.choice(model_member_dict[model], nm, replace=False, shuffle=False))
-                # select those files
-                file_list = file_list[used_members]
 
                 if not self.load_raw:
                     # check if the preprocessed data exists for this model/variable/resolution
@@ -136,6 +122,18 @@ class DataProcessing():
                         continue
                 else:
                     print('processing from raw data')
+                    # file path for this variable and model
+                    file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
+                    # check that path exists, if not print warning and continue
+                    if not os.path.exists(file_path):
+                        print('directory:', file_path, 'does not exist')
+                        print('continuing without this dataset')
+                        continue
+                    # get all files of this model and variable
+                    file_list = np.sort(glob.glob(os.path.join(file_path, '*')))
+                    # select files for correct members
+                    file_list = file_list[used_members]
+                    
                     for ii, file in enumerate(file_list):
                         # load file -- will be returned in xarray format
                         ens_member = xr.load_dataset(file).squeeze()
@@ -163,7 +161,6 @@ class DataProcessing():
                     np.min([ensemble_list.dropna(dim='time').time.max().dt.strftime("%Y-%m-%d").values, self.attr_dictionary[variable]["time"][1]])
                 ]
 
-                # if type(nm) == int:
                 # update model_member_dict to remove these members for later splits
                 model_member_dict[model] = np.setdiff1d(model_member_dict[model], used_members)
 
@@ -176,17 +173,27 @@ class DataProcessing():
     # -------------------------------------------------------------------------------
     # ------------------- smooth_time, sync_time, shift_inout_time ------------------
     
-    def smooth_time(self):
+    def smooth_time(self, stat='mean'):
         """
         smooth time to yearly for data.
         """
-        print("downsampling dataset to yearly")
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time='1Y').mean()
-        
+                if stat == 'min':
+                    print("downsampling dataset to coldest month of year")
+                    time_objects = self.data_dictionary[var][model].resample(time='1Y').mean().time
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].groupby('time.year').min().rename({var:var+'min', 'year':'time'})
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=time_objects)
+                elif stat == 'max':
+                    print("downsampling dataset to warmest month of year")
+                    time_objects = self.data_dictionary[var][model].resample(time='1Y').mean().time
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].groupby('time.year').max().rename({var:var+'max', 'year':'time'})
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=time_objects)
+                else:
+                    print("downsampling dataset to yearly")
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time='1Y').mean()
         print('time period now contains', self.data_dictionary[var][model].time.size, 'time steps')
 
     # -------------------------------------------------------------------------------
@@ -218,8 +225,8 @@ class DataProcessing():
         sync time period and dates between all models.
         
         inputs:
-            - time_range: a list, [start date, end date] in year-month-day format as strings,
-            e.g. ["1850-01-01", "2005-12-01"].
+            - time_range: a list, [start date, end date] as strings,
+            e.g. ["1850", "2005"].
             if none given, defaults to the common period between all models.
         outputs:
             - synced data_dictionary containing all datasets.
@@ -227,18 +234,19 @@ class DataProcessing():
         print('syncing time period and dates between all variables and models')
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
-            # if no time range given, use attr_dictionary (common time period between models)
-            if time_range is None:
-                time_range = [self.attr_dictionary[var]['time'][0].item(), self.attr_dictionary[var]['time'][1].item()]
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                # align time periods (start, end)
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].sel(time=slice(time_range[0], time_range[1]))
-            # align dates (only keep common dates)
-            temp_data = xr.align(*[self.data_dictionary[var][model] for model in self.data_dictionary[var].keys()], exclude=["member", "lat", "lon"]) 
-            # reassemble dictionary
-            for ii, model in enumerate(self.data_dictionary[var].keys()):
-                self.data_dictionary[var][model] = temp_data[ii]
+                # if no time range given, use attr_dictionary (common time period between models)
+                if time_range is None:
+                    time_range = [self.attr_dictionary[var]['time'][0].item(), self.attr_dictionary[var]['time'][1].item()]
+                    # align dates (only keep common dates)
+                    temp_data = xr.align(*[self.data_dictionary[var][model] for model in self.data_dictionary[var].keys()], exclude=["member", "lat", "lon"]) 
+                    # reassemble dictionary
+                    for ii, model in enumerate(self.data_dictionary[var].keys()):
+                        self.data_dictionary[var][model] = temp_data[ii]
+                else:
+                    # align time periods (start, end)
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].sel(time=slice(time_range[0], time_range[1]))
                 
         print('time period and dates synced, now using', self.data_dictionary[var][model].time.size, 'dates')
     
