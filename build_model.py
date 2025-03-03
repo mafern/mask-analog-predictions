@@ -9,7 +9,7 @@ import numpy as np
 def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
                        mask_initial_value, normalize_weights_bool):
     """
-    model part one: set up the mask which is used to weight the SOIs and analogs
+    model part one: set up the mask which is used to weight the SOIs and analogs,
     takes in soi and analog maps, returns mask-weighted maps and mask weights
     """
     # get the dimensions of the maps
@@ -28,8 +28,8 @@ def make_weights_model(x_train, mask_model_act, mask_l1, mask_l2,
             super(WeightsLayer, self).__init__(*args, **kwargs)
         # build is invoked automatically before the first instance of call
         # i.e. between instantiation and call
-        # defines self.bias which is then used in the call
         def build(self, input_shape):
+            # define self.bias which is then used in the call
             self.bias = self.add_weight('bias',
                                         shape=(input_shape[1:]),
                                         initializer=mask_initial_value,
@@ -159,7 +159,6 @@ def make_transfer_model(prediction_model_nodes, prediction_model_act, rng_seed, 
         )
     
     ## now define the transfer model
-    
     input_layer = tf.keras.layers.Input(shape=(1,))
     x = tf.keras.layers.Layer()(input_layer)
 

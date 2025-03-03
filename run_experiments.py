@@ -22,8 +22,8 @@ c_horsetooth = '#008FB3'
 c_stalwart = '#105456'
 blue_skyline = ['#0C2340', '#003057', '#1D4289', '#0057B7', '#418FDE', '#FFFFFF']
 blue_cmap = clr.LinearSegmentedColormap.from_list('blue skyline', blue_skyline[::-1], N=256)
-
-res_options = [[1.5, 1.5], [2.0, 2.0], [2.7672718509152645, 2.8125]]
+# preprocessed resolution options
+res_options = [[1.5, 1.5], [2.7672718509152645, 2.8125]]
 
 def get_settings(experiment_name):
     "helper to be consistent with existing code"
@@ -112,14 +112,14 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=2, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, val_models=None, target_var=None, window=1, trajectory=1, resolutions=1, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
                 - experiment_name: name of the experiment (how it will be saved and called)
                 - variable_list: list of variable names to be included in the data
-                - analog_models: which models to use for the analog split (run self.list_variables to see available options)
-                - soi_models: which models to use for the training split (run self.list_variables to see available options)
+                - analog_models: which models to use for the analog split
+                - soi_models: which models to use for the training split
                 - leadtime: time shift between inputs and target (should be a positive integer)
                 - split: list with integer number of members to include in each split of the data (order should be: analog, training, validation)
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
@@ -129,7 +129,7 @@ class Experiments():
                 - target_var: variable to predict (if None, use the first entry of the variable_list)
                 - window: calculate rolling mean over this number of steps (default is no windowing)
                 - trajectory: number of time steps over which to match for training (default is 1, which is matching on input time only)
-                - resolutions: resample spatial grid of data to a specified resolution: either pass 0-2 (high to low resolution) or pass a list [lat_res, lon_res]
+                - resolutions: resample spatial grid of data to a specified resolution: either pass 0-1 (high to low resolution) or pass a list [lat_res, lon_res]
                 - time_range: sync the time ranges between models, to the common time range (pass None, default), to a specified time range (pass a list [start_date, end_date]), or do nothing (pass False)
                 - norm_data: whether to normalize the data by its mean and std (default is True)
                 - baseline: normalize the datasets by a baseline period (pass a list of a start and end year for the baseline, e.g. [1951, 1980]) or do nothing (pass False, default)
@@ -162,12 +162,12 @@ class Experiments():
         if trajectory > 1 and leadtime != 1:
             print("*** using a trajectory > 1, enforcing a leadtime of 1")
             leadtime = 1
-        # get the target variable if one has not been passed
+        # get the target variable if one has not been passed -- assumes it is the first variable in variable_list
         if target_var is None:
             target_var = [variable_list[0],]
         if type(target_var) != list:
             target_var = [target_var]
-        # check validation models
+        # check validation models -- defaults to the same models as the soi
         if val_models is None:
             val_models = soi_models
         # fill a dictionary with the data split values
@@ -241,7 +241,7 @@ class Experiments():
         analog_inputs, analog_target = dp.neural_network_stack(self.processed_data['analog'], experiment_settings)
         training_inputs, training_target = dp.neural_network_stack(self.processed_data['training'], experiment_settings)
         validation_inputs, validation_target = dp.neural_network_stack(self.processed_data['validation'], experiment_settings)
-        # get the lat and lon ------ THIS ASSUMES THAT THE LAT AND LON ARE THE SAME BETWEEN THE ANALOG AND TRAINING SETS
+        # get the lat and lon
         lat, lon = self.processed_data['analog']['lat'], self.processed_data['analog']['lon']
         print('----------------------------------------------------------------')
         return [analog_inputs, analog_target, training_inputs, training_target,
@@ -509,20 +509,3 @@ class Experiments():
         print(function_list)
     
     # -------------------------------------------------------------------------------
-
-    @property
-    def list_variables(self):
-        resolution_dictionary = {
-            'GISS-E2-2-G': [2.0, 2.5], 'NorESM2-LM': [1.89, 2.5], 'ACCESS-ESM1-5': [1.25, 1.87], 'CanESM5-1': [2.79, 2.81], 'CMCC-CM2-HR4': [0.94, 1.25], 'CESM2': [0.94, 1.25], 'AWI-ESM-1-1': [1.86, 1.87], 'CAMS-CSM1': [1.12, 1.12], 'CMCC-ESM2': [0.94, 1.25], 'CESM2-WACCM': [0.94, 1.25], 'CAS-ESM2-0': [1.42, 1.41], 'MPI-ESM1-2-HR': [0.93, 0.93], 'AWI-CM-1-1': [0.93, 0.93], 'MIROC': [1.40, 1.41], 'MPI-ESM1-2-LR': [1.86, 1.87], 'GISS-E2-1-G': [2.0, 2.5], 'CNRM-CM6-1': [1.40, 1.41], 'CMCC-CM2-SR5': [0.94, 1.25], 'MRI-ESM2-0': [1.12, 1.12], 'MIROC-ES2H': [1.40, 1.41], 'CanESM5-CanOE': [2.79, 2.81], 'ACCESS-CM2': [1.25, 1.87], 'BCC-ESM1': [2.79, 2.81], 'UKESM1-1-LL': [1.25, 1.87], 'UKESM1-0-LL': [1.25, 1.87], 'CanESM5': [2.79, 2.81], 'BCC-CSM2': [1.12, 1.12], 'TaiESM': [0.94, 1.25], 'NorESM2-MM': [0.94, 1.25], 'MIROC-ES2L': [2.79, 2.81], 'ERA5': [0.25, 0.25], 'BEST': [1.0, 1.0]
-            }
-
-        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
-        models = np.sort([os.path.basename(models[i]) for i in range(len(models))])
-        # initialize list
-        for model in models:
-            model_vars = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, '*/'))
-            model_vars = [os.path.basename(model_vars[i][:-1]) for i in range(len(model_vars))]
-            n_members = [len(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, model_vars[i], '*'))) for i in range(len(model_vars))]
-            print(model+":", *np.sort(model_vars), n_members, 'resolution:', resolution_dictionary[model])
-            
-        

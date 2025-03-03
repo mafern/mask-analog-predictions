@@ -53,8 +53,6 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
 
         # continuosly returns batch_size number of soi and analog inputs (features),
         # along with their target absolute differences (labels)
-        # despite an individual batch of soi and analog being unlikely to be ideal for training,
-        # this can be repeated with different random batches until the loss is acceptable 
         training_data = batch_generator(settings,
                                         soi_train_input, soi_train_output,
                                         analog_input, analog_output,
@@ -75,6 +73,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
 
         class PrintCallback(tf.keras.callbacks.Callback):
             def on_train_begin(self, logs=None):
+                # save masks during each epoch of training
                 self.mask_training = []
                 self.savepath = os.path.join(os.path.dirname(__file__), 'figures', experiment_name)
                 if not os.path.exists(self.savepath):
@@ -83,6 +82,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
                 current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy().astype(FLOAT_TYPE)
                 self.mask_training.append(current_mask)
             def on_train_end(self, logs=None):
+                # only keep the epochs up to early stopping
                 final_epoch = earlystopping.stopped_epoch - settings['patience'] + 1
                 self.mask_training = self.mask_training[:final_epoch]
                 np.savetxt(os.path.join(self.savepath, 'mask_training'), self.mask_training)

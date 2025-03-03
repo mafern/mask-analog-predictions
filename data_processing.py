@@ -107,8 +107,10 @@ def process_data(experiment_settings):
     """
     # analog, training, validation splits (process in reverse of this order)
     split = experiment_settings['split']
+    resolution = experiment_settings['resolutions']
+    variable_list = experiment_settings['variable_list']
     # set up local version of model/member dictionary, allows random selection of members without repeating
-    model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.min([np.size(glob.glob(raw_data_dir+f'/{var}/*')) for var in experiment_settings['variable_list']]))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
+    model_member_dict = {raw_data_dir.split('/')[-1][:-3]: xr.load_dataset(raw_data_dir).member.to_numpy().astype(int) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), f'processed_data/{variable_list[0]}_lat{np.round(resolution[0], 2)}_lon{np.round(resolution[1], 2)}', '*')))}
     # random seed for selecting ensemble members
     seed = experiment_settings['seed']
     
@@ -337,40 +339,6 @@ def combine_hist_ssp(directory, delete_old=False, grid='gn', ssp_name='ssp370'):
                 if delete_old:
                     os.remove(file)
                     os.remove(files[ssp_ind][0])
-
-# -------------------------------------------------------------------------------
-
-def make_model_masks(file):
-    """
-    using a land-only variable, make a mask for the given model.
-    will make both a land mask and an ocean mask and save these as .nc files.
-
-    inputs:
-        - file: the path and name of a file for a model and variable that is
-        land-only.
-    """
-    # load land-only variable
-    mask_var = xr.load_dataarray(file).squeeze()
-    # get a land mask and ocean mask
-    landmask = xr.where(abs(mask_var.isel(time=0)) >= 0.0, np.nan, 1.0)
-    oceanmask = xr.where(abs(mask_var.isel(time=0)) >= 0.0, 1.0, np.nan)
-
-    # save in the appropriate directory, with the name landmask.nc and oceanmask.nc
-    land_xr = xr.Dataset(
-        data_vars=dict(mask=(["lat", "lon"], landmask.values)),
-        coords=dict(
-            lat=(["lat"], landmask.lat.values),
-            lon=(["lon"], landmask.lon.values))
-    )
-    land_xr.to_netcdf(os.path.join(*file.split('/')[:-2], 'landmask.nc'))
-
-    ocean_xr = xr.Dataset(
-        data_vars=dict(mask=(["lat", "lon"], oceanmask.values)),
-        coords=dict(
-            lat=(["lat"], oceanmask.lat.values),
-            lon=(["lon"], oceanmask.lon.values))
-    )
-    ocean_xr.to_netcdf(os.path.join(*file.split('/')[:-2], 'oceanmask.nc'))
 
 # -------------------------------------------------------------------------------
 

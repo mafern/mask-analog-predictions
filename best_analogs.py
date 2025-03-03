@@ -12,6 +12,10 @@ import bottleneck as bn
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
 
+# TODO: add get_targets version that uses multiple masks for a single initialization
+# TODO: and one that is recursive (best match becomes state to match on, and so on -- ensembles
+# either based off this single one, or only keep best match for each of the N analogs)
+
 # -------------------------------------------------------------------------------
 # general use functions
 # -------------------------------------------------------------------------------
@@ -153,7 +157,6 @@ def get_target_region(experiment_name, prediction_dict):
 # -------------------------------------------------------------------------------
 # best analogs class
 # -------------------------------------------------------------------------------
-
 class BestAnalogs():
     """
     Class for processing analog library, selecting best analogs for a given SOI.
@@ -170,12 +173,9 @@ class BestAnalogs():
         self.leadtime = experiment_settings['leadtime']
         self.mask_object = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'saved_masks', experiment_name+'_mask.nc'))
         self.library_name = library_name
-        
-        # initialize the prediction_dict object (lat and lon from the training data)
+        # initialize the prediction_dict object
         self.prediction_dict = {}
         self.prediction_dict['analogs'] = {}
-        self.used_members = np.empty(0, dtype=int)
-        self.used_models = np.empty(0, dtype=str)
 
         # construct or load a library of analogs
         if library_name is not None:
@@ -201,20 +201,7 @@ class BestAnalogs():
                 with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
                     pickle.dump(self.prediction_dict['inputs'], filename)     
                 with gzip.open(analog_path+'/target.pickle', "wb") as filename:
-                    pickle.dump(self.prediction_dict['target'], filename)                
-            else:
-                # if try succeeded, we have a prediction dataset, but may want to add more data to it
-                # add the used_members and use_models arrays with the prediction_dict (avoid saving the same data again)
-                self.used_members = self.prediction_dict['inputs'].member.to_numpy()
-                self.used_models = self.prediction_dict['inputs'].model.to_numpy()
-                # call process_new_data with model_list and n_members which will add new data to the dataset
-                if model_list is not None and n_members is not None:
-                    self.process_new_data(experiment_name, model_list, n_members)
-                    # and save the expanded prediction dataset
-                    with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
-                        pickle.dump(self.prediction_dict['inputs'], filename)
-                    with gzip.open(analog_path+'/target.pickle', "wb") as filename:
-                        pickle.dump(self.prediction_dict['target'], filename)
+                    pickle.dump(self.prediction_dict['target'], filename)
 
         # get lat and lon (global)
         self.prediction_dict['lat'] = self.prediction_dict['inputs']['lat']
@@ -252,23 +239,9 @@ class BestAnalogs():
             if np.isin(step, experiment_settings['target_proc_steps']):
                 experiment_settings['target_proc_steps'].remove(step)
         
-        # option for doing all models
-        if model_list == -1:
-            models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
-            model_list = [os.path.basename(model) for model in models]
-        
-        # load the new raw data
+        # load the new data
         for ii, model in enumerate(model_list):
-            # glob all the files and sort -- just used to get correct indices
-            if 'max' in variables[0] or 'min' in variables[0]:
-                var0 = variables[0][:-3]
-            else:
-                var0 = variables[0]
-            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, var0, '*')))
-            # remove indices corresponding to model/members that are in this models used_members
-            model_used_members = self.used_members[np.where(self.used_models == model)]
-            model_new_members = np.setdiff1d(np.arange(files.size), model_used_members)
-            # if -1 is passed, use all remaining members
+            # if -1 is passed, use all members
             if new_members == -1:
                 print('loading all available members, using', model_new_members.size, 'members from model:', model)
             # if more requested than available, use all remaining members
@@ -284,7 +257,7 @@ class BestAnalogs():
                 print("skipping "+model)
                 continue
             input_raw = _dp.DataProcessing([model], variables, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
-            # get the targets
+            # get the targets (first try to avoid processing again, if target was in input already)
             if np.isin(target_var[0], variables):
                 # deepcopy a version for the outputs
                 output_raw = copy.deepcopy(input_raw)
@@ -293,11 +266,10 @@ class BestAnalogs():
                 # remove them
                 for drop in remove_vars:
                     output_raw.data_dictionary.pop(drop)
-            # target variable is not one of the input variables
             else:
                 output_raw = _dp.DataProcessing([model], target_var, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
                 
-            # run some processing steps for the inputs
+            # run processing steps for the inputs
             print('#################################################################')
             print('processing', model, 'input dataset')
             print('#################################################################')
@@ -306,7 +278,7 @@ class BestAnalogs():
                 print('-------------------------------------------------------')
             print('-------------------------------------------------------')
 
-            # run some processing steps for the targets
+            # run processing steps for the targets
             print('#################################################################')
             print('processing', model, 'target dataset')
             print('#################################################################')
@@ -416,7 +388,7 @@ class BestAnalogs():
 # -------------------------------------------------------------------------------
     
     def get_all_soi_analogs(self, soi_model, soi_member, tether=1, savename=None,
-                            quant=None, mask_type='weights', leadtime=None):
+                            quant=None, mask_type='weights', leadtime=None, start_year=None):
         """
         multiprocessing for loop to get all soi analogs for an observational dataset or single model/member,
         i.e. the full time series of sois for a given model/member or observational dataset
@@ -429,7 +401,7 @@ class BestAnalogs():
         # check that this analog is not already saved
         analog_exists = os.path.exists(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'))
         assert not analog_exists, 'analog with savename ' + savename + '.pickle exists -- to replace, delete the current file and re-run'
-        # option to use a different leadtime (especially for trajectory learned masks)
+        # option to use a different leadtime (for trajectory learned masks)
         if leadtime is None:
             leadtime = self.leadtime
 
@@ -451,12 +423,13 @@ class BestAnalogs():
                 ).astype(FLOAT_TYPE)
             mask_object = xr.merge([mask_object.to_dataset(name=var) for var in vars])
         
-        # check if the requested SOI is in the prediction_dict yet -- for now, it has to be, otherwise
-        # I will have to add a call to process_new_data that bypasses some of the concatenation, etc.
+        # check that the requested SOI is in the prediction_dict
         try:
             soi_index = np.where((self.prediction_dict['inputs'].model == soi_model) *
                                  (self.prediction_dict['inputs'].member == soi_member))[0]
             soi_inputs = self.prediction_dict['inputs'].isel(sample=soi_index) * mask_object
+            if start_year is not None:
+                soi_inputs = soi_inputs.isel(sample=np.array(soi_inputs['time.year'] > start_year))
         except:
             print('that SOI is not in the already processed prediction_dict')
             
@@ -483,12 +456,12 @@ class BestAnalogs():
         # weights for tethering
         # tether_weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
         tether_weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(np.float32)
-
         for ii in range(soi_inputs.dims['sample']):
             if ii == 0:
                 soi_ds = self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])
             else:
                 soi_ds = xr.concat([soi_ds, self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])], dim='time')
+            print(f"sample {ii+1}/{soi_inputs.dims['sample']+1} completed")
 
         # save it now
         with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=3) as filename:

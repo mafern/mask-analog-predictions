@@ -296,7 +296,6 @@ class AnalogMetrics():
         # scale the distance matrix so values are not way bigger than the variable
         dist_mean, truth_mean = np.mean(dist_matrix), np.mean(truth.data)
         dist_matrix = dist_matrix / dist_mean * truth_mean # truth based units
-        # dist_matrix = dist_matrix / 100 # units of 100 km
         
         # calculate EMD for multi-model mean prediction
         if prediction == "model":
@@ -397,7 +396,7 @@ class AnalogMetrics():
         non_soi_analogs = self.analog_library.sel(time=time_slice)
         perfect_analogs = self.perfect_analogs.sel(soi_time=time_slice)
         truth = self.truth.sel(time=time_slice)
-        # map by time number of entries
+        # map by time number of entries (time x lat x lon)
         time_x_map_size = np.prod(truth.shape)
         # set up interpolation axis, range, number of steps
         nsteps = 10000
@@ -460,78 +459,6 @@ class AnalogMetrics():
             return crps
         else:
             print("option for prediction not recognized")
-
-    # -------------------------------------------------------------------------------
-
-    def class_accuracy(self, n_analogs, n_cells, prediction="analog", map=False, coarsen_time=1, time_range=None):
-        """break up range into bins, count how often prediction and truth are in same (bin size flexible to change accuracy measure)"""
-        # restrict to specific time range, if requested
-        if time_range is not None:
-            time_slice = slice(time_range[0], time_range[1])
-        else:
-            time_slice = slice("0000", "9999")
-
-        # get analog prediction, truth, library
-        _, analog, _, _ = ba.get_targets(self.experiment_name, self.soi_model, self.soi_member, self.tether, self.variable, n_analogs,
-                                         prediction_dict=self.prediction_dict, soi_signature=self.soi_signature, library_name=self.library_name,
-                                         leadtime=self.leadtime, rank_alpha=self.rank_alpha)
-        # align truth, analog prediction, perfect analogs, and library
-        analog = analog[:-self.leadtime].sel(time=time_slice)
-        truth = self.truth.sel(time=time_slice)
-        truth_time_slice = slice(str(self.truth.sel(time=time_slice)['time.year'].min().data), str(self.truth.sel(time=time_slice)['time.year'].max().data))
-        non_soi_analogs = self.analog_library.mean("member", skipna=True).sel(time=truth_time_slice)
-        perfect_analogs = self.perfect_analogs.sel(soi_time=time_slice)
-
-        # coarsen time, if desired (value other than 1)
-        truth = np.array([np.mean(truth[ii:ii+coarsen_time].data, axis=0) for ii in range(0, truth.shape[0], coarsen_time)])
-        analog = np.array([np.mean(analog[ii:ii+coarsen_time].data, axis=0) for ii in range(0, analog.shape[0], coarsen_time)])
-        non_soi_analogs = np.array([np.mean(non_soi_analogs[ii:ii+coarsen_time].data, axis=0) for ii in range(0, non_soi_analogs.shape[0], coarsen_time)])
-        perfect_analogs = np.array([np.mean(perfect_analogs[ii:ii+coarsen_time].data, axis=0) for ii in range(0, perfect_analogs.shape[0], coarsen_time)])
-
-        # get range of variable
-        min_val = np.nanmin([np.nanmin(truth), np.nanmin(non_soi_analogs)])
-        max_val = np.nanmax([np.nanmax(truth), np.nanmax(non_soi_analogs)])
-        val_range = np.linspace(min_val, max_val, n_cells)
-        range_matrix = np.tile(val_range, np.product(truth.shape)).reshape(truth.shape + (-1,))
-
-        # make coarsened truth (shape is [time x lat x lon x n_cells] with 1 for the cell the truth falls in, 0 everywhere else)
-        truth_matrix = truth.reshape(truth.shape + (1,))
-        coarse_truth = np.nanmin(abs(range_matrix - truth_matrix), axis=-1, keepdims=True) == abs(range_matrix - truth_matrix)
-        # repeat for the analog prediction
-        pred_matrix = analog.reshape(analog.shape + (1,))
-        coarse_pred = np.nanmin(abs(range_matrix - pred_matrix), axis=-1, keepdims=True) == abs(range_matrix - pred_matrix)
-        # and for the model mean
-        model_matrix = non_soi_analogs.reshape(non_soi_analogs.shape + (1,))
-        coarse_model = np.nanmin(abs(range_matrix - model_matrix), axis=-1, keepdims=True) == abs(range_matrix - model_matrix)
-        # and for the perfect analogs
-        perfect_matrix = perfect_analogs.reshape(perfect_analogs.shape + (1,))
-        coarse_perfect = np.nanmin(abs(range_matrix - perfect_matrix), axis=-1, keepdims=True) == abs(range_matrix - perfect_matrix)
-        # now, find where the predictions line up with the truth and count -- it either matched (1) or didn't (0)
-        pred_classification = np.sum(coarse_truth * coarse_pred, axis=-1)
-        model_classification = np.sum(coarse_truth * coarse_model, axis=-1)
-        perfect_classification = np.sum(coarse_truth * coarse_perfect, axis=-1)
-        if prediction == "model":
-            if map:
-                class_acc = np.mean(model_classification, axis=0)
-            else:
-                class_acc = np.mean(np.mean(model_classification, axis=2), axis=1)
-            return class_acc
-        elif prediction == "analog":
-            if map:
-                class_acc = np.mean(pred_classification, axis=0)
-            else:
-                class_acc = np.mean(np.mean(pred_classification, axis=2), axis=1)
-            return class_acc
-        elif prediction == "perfect":
-            if map:
-                class_acc = np.mean(perfect_classification, axis=0)
-            else:
-                class_acc = np.mean(np.mean(perfect_classification, axis=2), axis=1)
-            return class_acc
-        else:
-            print("option for prediction not recognized")
-
-    # -------------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------------
 

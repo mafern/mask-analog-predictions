@@ -44,7 +44,7 @@ class DataProcessing():
         self.resolution = resolution
         if model_member_dict is None:
             # save model_member_dict
-            model_member_dict = {raw_data_dir.split('/')[-1]: np.arange(int(np.min([np.size(glob.glob(raw_data_dir+f'/{var}/*')) for var in variable_list]))) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', '*')))}
+            model_member_dict = {raw_data_dir.split('/')[-1][:-3]: xr.load_dataset(raw_data_dir).member.to_numpy().astype(int) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), f'processed_data/{variable_list[0]}_lat{np.round(self.resolution[0], 2)}_lon{np.round(self.resolution[1], 2)}', '*')))}
         self.model_member_dict = model_member_dict
 
         # whether to load raw data or cancel if preprocessed is not found
@@ -108,7 +108,7 @@ class DataProcessing():
                     var_res_dir = variable+'_lat'+str(np.round(self.resolution[0], 2))+'_lon'+str(np.round(self.resolution[1], 2))
                     preprocessed_path = os.path.join(os.path.dirname(__file__), "processed_data", var_res_dir)
                     preprocessed_file = os.path.join(preprocessed_path, model+'.nc')
-                    # if it does exist, just load it, otherwise continue with loading from raw_data
+                    # if it does exist, load it, otherwise skip it
                     if os.path.exists(preprocessed_file):
                         print('found preprocessed data for', model)
                         # remove height coordinate if it exists here
@@ -181,19 +181,8 @@ class DataProcessing():
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                if stat == 'min':
-                    print("downsampling dataset to coldest month of year")
-                    time_objects = self.data_dictionary[var][model].resample(time='1Y').mean().time
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].groupby('time.year').min().rename({var:var+'min', 'year':'time'})
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=time_objects)
-                elif stat == 'max':
-                    print("downsampling dataset to warmest month of year")
-                    time_objects = self.data_dictionary[var][model].resample(time='1Y').mean().time
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].groupby('time.year').max().rename({var:var+'max', 'year':'time'})
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].assign_coords(time=time_objects)
-                else:
-                    print("downsampling dataset to yearly")
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time='1Y').mean()
+                print("downsampling dataset to yearly")
+                self.data_dictionary[var][model] = self.data_dictionary[var][model].resample(time='1Y').mean()
         print('time period now contains', self.data_dictionary[var][model].time.size, 'time steps')
 
     # -------------------------------------------------------------------------------
@@ -314,8 +303,7 @@ class DataProcessing():
     
     def mask_data(self, mask):
         """
-        mask the oceans or the land.
-        if available, uses model specific mask, else use natural earth 1:10m map
+        mask the oceans or the land using natural earth 1:10m map
         
         inputs:
             - mask: a string for what to mask, either 'ocean' or 'land'
@@ -325,32 +313,19 @@ class DataProcessing():
         assert np.isin(mask, ['ocean', 'land']), "input mask should be either 'land' or 'ocean'"
         print('masking the', mask, 'from all datasets')
         
-        # get the backup map from natural earth
+        # get the map from natural earth
         mask_map = regionmask.defined_regions.natural_earth_v5_0_0.land_10
         
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
-            for model in self.data_dictionary[var].keys():
-                # try loading model specific mask first
-                try:
-                    # load map for this model
-                    model_mask = xr.load_dataset(os.path.join(os.path.dirname(__file__), 'raw_data/', model, mask+'mask.nc'))
-                    # if the current resolution is different from default (does not match saved mask)
-                    if model_mask.dims != self.data_dictionary[var][model][["lat", "lon"]].dims:
-                        # adjust the resolution of the mask to be the same as the model and variable
-                        regridder = xe.Regridder(model_mask, self.data_dictionary[var][model], "bilinear", periodic=True)
-                        model_mask = regridder(model_mask, keep_attrs=True)
-                    final_mask = model_mask.mask
-                    print('masking', model, 'model using model specific mask')
-                # no model specific mask, use natural earth
-                except:
-                    # divide into either land or ocean mask
-                    final_mask = mask_map.mask(self.data_dictionary[var][model]) + 1
-                    if mask == 'land':
-                        final_mask = final_mask.fillna(0).where(final_mask.fillna(0) == 0) + 1
-                    print('masking', model, 'using natural earth map')
-                
+            for model in self.data_dictionary[var].keys():            
+                # get the right grid for the mask
+                final_mask = mask_map.mask(self.data_dictionary[var][model]) + 1
+                # divide into either land or ocean mask
+                if mask == 'land':
+                    final_mask = final_mask.fillna(0).where(final_mask.fillna(0) == 0) + 1
+                print('masking', model, 'using natural earth map')
                 # mask the datasets
                 self.data_dictionary[var][model] = self.data_dictionary[var][model] * final_mask
                 # save the final_mask for later use
