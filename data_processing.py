@@ -8,6 +8,9 @@ from copy import deepcopy
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
 
+# RAW_DATA_PATH = os.path.dirname(__file__)
+RAW_DATA_PATH = '/Volumes/Data/Martin_Fernandez/'
+
 # -------------------------------------------------------------------------------
 
 def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False, scratch=False, res_check=True, stat=None):
@@ -23,14 +26,14 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
     """
     # get model list, if not specified
     if model_list == -1:
-        model_list = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
+        model_list = glob.glob(os.path.join(RAW_DATA_PATH, 'raw_data/*'))
         model_list = np.sort([os.path.basename(model_list[i]) for i in range(len(model_list))])
 
     # loop through each model in model_list and preprocess
     for model in model_list:
         # get the available variables for this model
         if var_list == -1:
-            var_list = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/'+model+'/*'))
+            var_list = glob.glob(os.path.join(RAW_DATA_PATH, 'raw_data/'+model+'/*'))
             var_list = np.sort([os.path.basename(var_list[i]) for i in range(len(var_list))])
         # check that the resolution of this model is not smaller than requested -- if so, skip
         # (do not want to downscale at this point, perhaps in the future)
@@ -50,13 +53,13 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
                 os.mkdir(os.path.join(os.path.dirname(__file__), "processed_data", preprocessed_folder))
             preprocessed_filename = os.path.join(preprocessed_folder, model+'.nc')
             if not overwrite_data and os.path.exists(preprocessed_filename):
-                print("skipping", model, var)
+                print("already exists, skipping", model, var)
                 continue
             # get available members for this model and variable
-            files = np.sort(glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data', model, var, '*')))
+            files = np.sort(glob.glob(os.path.join(RAW_DATA_PATH, 'raw_data', model, var, '*')))
             # check that this model has this variable (if not, skip to next)
             if files.size == 0:
-                print("skipping", model, var)
+                print("variable not available, skipping", model, var)
                 continue
 
             # now that we are actually doing some preprocessing, print model, var, number of members
@@ -65,8 +68,10 @@ def preprocess_data(resolution, var_list=-1, model_list=-1, overwrite_data=False
             # define the preprocessing steps
             preprocess_steps = ["smooth_time(stat)",
                                 "smooth_space(resolution)"]
+            # get model dictionary from raw data
+            model_member_dict = {model_path.split('/')[-1]: np.arange(len(glob.glob(model_path+f'/{var}/*'))) for model_path in np.sort(glob.glob(os.path.join(RAW_DATA_PATH+'raw_data/*'))) if len(glob.glob(model_path+f'/{var}/*')) > 0}
             # initialize the processing object, loads the data
-            input_raw = _dp.DataProcessing([model], [var], list(np.arange(files.size)), 0, resolution, load_raw=True)
+            input_raw = _dp.DataProcessing([model], [var], list(np.arange(files.size)), 0, resolution, load_raw=True, model_member_dict=model_member_dict)
 
             # run some processing steps for the inputs
             print('#################################################################')
@@ -139,7 +144,6 @@ def process_data(experiment_settings):
         # target variable is not one of the input variables
         else:
             output_raw = _dp.DataProcessing(model_list, experiment_settings['target_var'], split[split_set], seed, experiment_settings['resolutions'], model_member_dict)
-
         # initialize dictionary for this split set
         current_data = {"inputs": {}, "target": {}, "lat": {}, "lon": {}, "land_ocean_mask": {}}
         # run some processing steps for the inputs
@@ -214,7 +218,7 @@ def process_data(experiment_settings):
         current_data['target'] = current_data['target'].assign_coords(lat=current_data['target']['lat'].astype(FLOAT_TYPE),
                                                                       lon=current_data['target']['lon'].astype(FLOAT_TYPE),
                                                                       member=current_data['target']['member'].astype(INT_TYPE)).astype(FLOAT_TYPE)
-        
+
         # update dictionary to return
         processed_data[split_set] = current_data
         # update model_member_dict for next split
@@ -344,7 +348,7 @@ def combine_hist_ssp(directory, delete_old=False, grid='gn', ssp_name='ssp370'):
 
 def get_model_res_dictionary(scratch=False):
     if scratch:
-        models = glob.glob(os.path.join(os.path.dirname(__file__), 'raw_data/*'))
+        models = glob.glob(os.path.join(RAW_DATA_PATH, 'raw_data/*'))
         resolution_dictionary = {}
         for model in models:
             file1 = glob.glob(model+'/*/*')[0]

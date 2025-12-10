@@ -45,7 +45,15 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
             restore_best_weights=True)
 
         # LEARNING RATE
-        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=settings["learning_rate"])
+        # for transfer learning, use a scheduler
+        if settings['transfer_exp'] is not None:
+            scheduler = tf.keras.optimizers.schedules.PolynomialDecay(
+                settings["learning_rate"], settings["max_epochs"],
+                end_learning_rate=settings["learning_rate"]/100,
+                power=1, cycle=False)
+            optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=scheduler)
+        else:
+            optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=settings["learning_rate"])
         loss = settings["loss"]
 
         # COMPILE THE MODEL
@@ -82,9 +90,7 @@ def train_model(settings, model, analog_input, analog_output, soi_train_input, s
                 current_mask = model.get_layer('mask_model').get_layer("weights_layer").bias.numpy().astype(FLOAT_TYPE)
                 self.mask_training.append(current_mask)
             def on_train_end(self, logs=None):
-                # only keep the epochs up to early stopping
-                final_epoch = earlystopping.stopped_epoch - settings['patience'] + 1
-                self.mask_training = self.mask_training[:final_epoch]
+                # save file with all training epochs
                 np.savetxt(os.path.join(self.savepath, 'mask_training'), self.mask_training)
 
         # train the model

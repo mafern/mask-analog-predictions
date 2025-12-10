@@ -7,7 +7,9 @@ import run_experiments as rexp
 import os
 import gzip
 import copy
+from tqdm import tqdm
 import bottleneck as bn
+import time
 
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
@@ -31,31 +33,29 @@ def get_targets(experiment_name, soi_model, soi_member, tether, variable, n_anal
         prediction_dict = BestAnalogs(experiment_name, library_name=library_name).prediction_dict
     # make sure there are analogs to get targets from
     assert len(list(prediction_dict['analogs'].keys())) > 0, "no soi analogs calculated yet"
-
+    # soi file name, if none given
     if soi_signature is None:
         # get the soi savename corresponding to the requested soi_model, soi_member, and tether
         soi_signature = soi_model + '_mem' + str(soi_member) + '_teth' + str(tether)
         if library_name is not None:
             soi_signature = soi_signature + '_library_' + library_name
-
     # get the indices for the selected soi
     analog_path = os.path.join(os.path.dirname(__file__), "saved_analogs", experiment_name, soi_signature+'.pickle')
     with gzip.open(analog_path, 'rb') as file:
         analog_indices = pickle.load(file)
-
     # weights and leadtime
     weights = np.cos(np.deg2rad(prediction_dict['target'].lat))
     if leadtime is None:
         leadtime = rexp.Experiments().get_experiment(experiment_name)['leadtime']
 
-    # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
+    # get name of model if using global or regional
     if "global" in soi_model or "regional" in soi_model:
         # return the experiment name without the "global" or "regional" suffix
         suffix_ind = soi_model[::-1].find('_')
         soi_model = soi_model[:-(suffix_ind+1)]
+    # get the soi_ind corresponding to the requested soi_model and soi_member for the inputs and target
     soi_index = np.where((prediction_dict['target'].model == soi_model) &
                          (prediction_dict['target'].member == soi_member))[0]
-    
     # get the soi (aka the truth))
     truth = prediction_dict['target'].isel(sample=soi_index[tether-1:])[variable]
     truth = truth.drop('sample').rename({'sample': 'time'}).assign_coords({"member": ("time", truth.member.data), "time": ("time", truth.time.data)})
@@ -198,9 +198,9 @@ class BestAnalogs():
                 # start a new file by processing the models/members requested
                 self.process_new_data(experiment_name, model_list, n_members)
                 # and save the new prediction dataset
-                with gzip.open(analog_path+'/inputs.pickle', "wb") as filename:
+                with gzip.open(analog_path+'/inputs.pickle', "wb", compresslevel=1) as filename:
                     pickle.dump(self.prediction_dict['inputs'], filename)     
-                with gzip.open(analog_path+'/target.pickle', "wb") as filename:
+                with gzip.open(analog_path+'/target.pickle', "wb", compresslevel=1) as filename:
                     pickle.dump(self.prediction_dict['target'], filename)
 
         # get lat and lon (global)
@@ -225,6 +225,7 @@ class BestAnalogs():
     def process_new_data(self, experiment_name, model_list, new_members=-1):
         # get experiment settings
         experiment_settings = rexp.Experiments().get_experiment(experiment_name)
+        res = np.round(experiment_settings['resolutions'], 2)
         variables = experiment_settings['variable_list']
         target_var = experiment_settings['target_var']
         # remove some of the processing steps that are not necessary for the prediction part
@@ -241,22 +242,24 @@ class BestAnalogs():
         
         # load the new data
         for ii, model in enumerate(model_list):
+            model_path = os.path.join(os.path.dirname(__file__), 'processed_data', variables[0]+f"_lat{res[0]}_lon{res[1]}", model+'.nc')
+            model_members = xr.load_dataset(model_path).member.data
             # if -1 is passed, use all members
             if new_members == -1:
-                print('loading all available members, using', model_new_members.size, 'members from model:', model)
+                print('loading all available members, using', model_members.size, 'members from model:', model)
             # if more requested than available, use all remaining members
-            elif model_new_members.size < new_members:
+            elif model_members.size < new_members:
                 print('*** Warning: more new members requested than available ***')
-                print('loading all available, using', model_new_members.size, 'members from model:', model)
+                print('loading all available, using', model_members.size, 'members from model:', model)
             # otherwise, return the number requested
             else:
-                model_new_members = model_new_members[:new_members]
+                model_members = model_members[:new_members]
 
             # set up the data processing
-            if model_new_members.size == 0:
+            if model_members.size == 0:
                 print("skipping "+model)
                 continue
-            input_raw = _dp.DataProcessing([model], variables, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
+            input_raw = _dp.DataProcessing([model], variables, list(model_members), experiment_settings['seed'], experiment_settings['resolutions'])
             # get the targets (first try to avoid processing again, if target was in input already)
             if np.isin(target_var[0], variables):
                 # deepcopy a version for the outputs
@@ -267,7 +270,7 @@ class BestAnalogs():
                 for drop in remove_vars:
                     output_raw.data_dictionary.pop(drop)
             else:
-                output_raw = _dp.DataProcessing([model], target_var, list(model_new_members), experiment_settings['seed'], experiment_settings['resolutions'])
+                output_raw = _dp.DataProcessing([model], target_var, list(model_members), experiment_settings['seed'], experiment_settings['resolutions'])
                 
             # run processing steps for the inputs
             print('#################################################################')
@@ -296,10 +299,10 @@ class BestAnalogs():
             output_raw = output_raw.data_dictionary[target_var[0]][model]
 
             # make a list of the model name repeating for the number of members
-            repeat_model = [model] * model_new_members.size
+            repeat_model = [model] * model_members.size
             # add the member indices as a coordinate
-            input_raw = input_raw.assign_coords(member=(model_new_members))
-            output_raw = output_raw.assign_coords(member=(model_new_members))
+            input_raw = input_raw.assign_coords(member=(model_members))
+            output_raw = output_raw.assign_coords(member=(model_members))
             # and add the models as a coordinate
             input_raw = input_raw.assign_coords(model=('member', repeat_model))
             output_raw = output_raw.assign_coords(model=('member', repeat_model))
@@ -356,16 +359,20 @@ class BestAnalogs():
 
         mse = 0
         for var in list(weighted_soi.data_vars):
-            # reshape analog and soi for faster computation (broadcasting)
+            c_mse = 0
             analogs = weighted_analogs[var].to_numpy()
-            soi = weighted_soi.expand_dims('placeholder').transpose('trend', 'placeholder', 'lat', 'lon')[var].to_numpy()
+            soi = weighted_soi[var].to_numpy()
             # calculate mse and sort by this
             if np.product(analogs.shape) < 2.5e9: # size of matrix is small enough to broadcast
-                mse += np.mean(bn.nanmean(bn.nanmean((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
+                c_mse += np.sum(bn.nansum(bn.nansum((analogs - soi)**2, axis=3), axis=2) * weights, axis=0)
             else:
-                # for each tether -- reduce matrix size
+                # for each tether -- reduce matrix size (memory and speed)
                 for tt in range(np.shape(soi)[0]):
-                    mse += bn.nanmean(bn.nanmean((analogs[tt] - soi[tt])**2, axis=2), axis=1) * weights[tt]
+                    # for each latitude -- reduce matrix size even more (memory and speed)
+                    for ll in range(weighted_soi.lat.size):
+                        c_mse += bn.nansum((analogs[tt, :, ll] - soi[tt, :, ll])**2, axis=1) * weights[tt]
+            # so each variable contributes equally, despite different numerical scales
+            mse += c_mse / c_mse.max()
         best_samples = np.argsort(mse)
 
         # keep only the last time in the trend -- the actual map to predict from
@@ -380,7 +387,7 @@ class BestAnalogs():
                 best_input_models=(["time", "analogs"], weighted_analogs.model[best_samples].data.reshape(1, -1)),
             ),
             coords=dict(
-                soi_time=("time", list(weighted_soi.time[-1:].data))
+                soi_time=("time", list(weighted_soi.isel(sample=0).time[-1:].data))
                     )
         )
         return(soi_ds)
@@ -436,6 +443,7 @@ class BestAnalogs():
         # now remove this particular soi member from the analog library
         analog_inds = np.setdiff1d(np.arange(self.prediction_dict['inputs'].member.size), soi_index)
         weighted_analogs = self.prediction_dict['inputs'].isel(sample=analog_inds) * mask_object
+        #### could add del self.prediction_dict to open up some more memory
         
         # empty gets filled, so need to remove the first entry before using
         good_inds = np.empty([1, tether], dtype=int)
@@ -448,25 +456,22 @@ class BestAnalogs():
                 good_inds = np.concatenate([good_inds, cinds])
         good_inds_xr = xr.DataArray(data=good_inds[1:], dims=['sample', 'trend'])
         weighted_analogs = weighted_analogs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
-
         # do the same for soi
         good_inds_xr = xr.DataArray(data=np.lib.stride_tricks.sliding_window_view(np.arange(soi_inputs.sample.size), tether), dims=['sample', 'trend'])
         soi_inputs = soi_inputs.isel(sample=good_inds_xr).transpose('trend', 'sample', 'lat', 'lon')
-        
-        # weights for tethering
-        # tether_weights = np.array([1.]*tether).reshape(-1, 1).astype(np.float32)
-        tether_weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(np.float32)
-        for ii in range(soi_inputs.dims['sample']):
-            if ii == 0:
-                soi_ds = self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])
-            else:
-                soi_ds = xr.concat([soi_ds, self._get_single_soi_analogs([soi_inputs.isel(sample=ii), weighted_analogs, tether_weights])], dim='time')
-            print(f"sample {ii+1}/{soi_inputs.dims['sample']+1} completed")
 
-        # save it now
-        with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=3) as filename:
+        # weights for tethering
+        # tether_weights = np.array([1.]*tether).reshape(-1, 1).astype(FLOAT_TYPE)
+        tether_weights = 1/(np.arange(tether, 0, -1)).reshape(-1, 1).astype(FLOAT_TYPE)
+        for ii in tqdm(range(soi_inputs.dims['sample'])):
+            if ii == 0:
+                soi_ds = self._get_single_soi_analogs([soi_inputs.isel(sample=[ii]), weighted_analogs, tether_weights])
+            else:
+                soi_ds = xr.concat([soi_ds, self._get_single_soi_analogs([soi_inputs.isel(sample=[ii]), weighted_analogs, tether_weights])], dim='time')
+
+        # save the analog dataset
+        with gzip.open(os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'), "wb", compresslevel=1) as filename:
             print('saving to:', os.path.join(os.path.dirname(__file__), "saved_analogs", self.experiment_name, savename+'.pickle'))
             pickle.dump(soi_ds, filename)
 
 # -------------------------------------------------------------------------------
-

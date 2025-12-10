@@ -18,6 +18,9 @@ regional climate predictions on multi-year to decadal time scales using an analo
 > [!NOTE]
 > this code base has been written to use yearly data, which can come from either earth system models or observations
 
+> [!IMPORTANT]
+> ensure that you have all the same models/members when matching on multiple variables
+
 <h2 align="center">code usage</h2>
 
 steps for running the full framework (from defining a new experiment, to learning the mask, to identifying the best analogs and plotting predictions) can be see in the new_experiment.ipynb notebook

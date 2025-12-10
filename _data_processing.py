@@ -11,6 +11,9 @@ import regionmask
 import json
 from copy import deepcopy
 
+# RAW_DATA_PATH = os.path.dirname(__file__)
+RAW_DATA_PATH = '/Volumes/Data/Martin_Fernandez/'
+
 class DataProcessing():
     """
     class to load models and perform various preprocessing steps to prepare the data for the mask training or analog library
@@ -44,7 +47,7 @@ class DataProcessing():
         self.resolution = resolution
         if model_member_dict is None:
             # save model_member_dict
-            model_member_dict = {raw_data_dir.split('/')[-1][:-3]: xr.load_dataset(raw_data_dir).member.to_numpy().astype(int) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), f'processed_data/{variable_list[0]}_lat{np.round(self.resolution[0], 2)}_lon{np.round(self.resolution[1], 2)}', '*')))}
+            model_member_dict = {raw_data_dir.split('/')[-1][:-3]: xr.load_dataset(raw_data_dir).member.to_numpy().astype(int) for raw_data_dir in np.sort(glob.glob(os.path.join(os.path.dirname(__file__), f'processed_data/{variable_list[0]}_lat'+str(np.round(self.resolution[0], 2))+'_lon'+str(np.round(self.resolution[1], 2)), '*')))}
         self.model_member_dict = model_member_dict
 
         # whether to load raw data or cancel if preprocessed is not found
@@ -82,7 +85,7 @@ class DataProcessing():
             }
             # get a model_member_dictionary for this variable
             model_member_dict = deepcopy(self.model_member_dict)
-            
+
             for model in model_list:
                 nm = n_members
                 if type(nm) == int:
@@ -123,7 +126,7 @@ class DataProcessing():
                 else:
                     print('processing from raw data')
                     # file path for this variable and model
-                    file_path = os.path.join(os.path.dirname(__file__), 'raw_data/', model, variable)
+                    file_path = os.path.join(RAW_DATA_PATH, 'raw_data/', model, variable)
                     # check that path exists, if not print warning and continue
                     if not os.path.exists(file_path):
                         print('directory:', file_path, 'does not exist')
@@ -138,20 +141,17 @@ class DataProcessing():
                         # load file -- will be returned in xarray format
                         ens_member = xr.load_dataset(file).squeeze()
                         # resample for consistency with monthly data (day of month)
-                        ens_member = ens_member.resample(time='M').mean()
+                        ens_member = ens_member.convert_calendar("noleap").resample(time='1M').mean().expand_dims(dim={"member": 1}, axis=0)
 
                         # create ensemble_list or add to ensemble_list
                         if ii == 0:
                             # add member dimension
-                            ensemble_list = ens_member.expand_dims(dim={"member": 1}, axis=0)
+                            ensemble_list = ens_member
                         else:
                             ensemble_list = xr.concat([ensemble_list, ens_member], dim="member")
-                        ens_member.close()
 
                     # add model to the dictionary
-                    # resample step is to align data types and should not change anything meaningful
-                    ensemble_list = ensemble_list.convert_calendar("noleap")
-                    data_dictionary[variable][model] = ensemble_list.resample(time='1M').mean()
+                    data_dictionary[variable][model] = ensemble_list
                     print('successfully loaded', ii+1, 'ensemble members from', file_path)
 
                 # update the attr_dictionary
@@ -333,7 +333,7 @@ class DataProcessing():
 
     # -------------------------------------------------------------------------------
 
-    def get_region(self, box_or_regions):
+    def get_region(self, box_or_regions, shapefile=None):
         """
         return data for the specified region only.
         can be a list of numeric boundaries, or region names.
@@ -341,72 +341,93 @@ class DataProcessing():
         inputs:
             - box_or_regions: list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat],
             or a region name (or list of region names), e.g. ['NWN', 'E.North-America', 'NCA']
+            - shapefile: if path to shapefile is given, loads the shapefile and uses that for masking region
         outputs:
             - data_dictionary with datasets for only the specified regions.
         """
-        # regionmask package is used when region names are passed and not in regions.json
-        # see https://regionmask.readthedocs.io/en/stable/
-        print('extracting region(s):', box_or_regions)
-        assert type(box_or_regions[0]) is str or type(box_or_regions) is list, "input should be a list of bounds or name of region"
+        if shapefile is not None:
+            # load shapefile and convert to regionmask mask for selecting region
+            print('using shapefile:', shapefile)
+            # import geopandas and load shapefile
+            import geopandas as gp
+            shape = gp.read_file(shapefile)
+            # for each variable in the dataset
+            for var in self.data_dictionary.keys():
+                # for each model (get down to the xarray level from the dictionary)
+                for model in self.data_dictionary[var].keys():
+                    # make regionmask mask
+                    region_mask = regionmask.mask_geopandas(shape, self.data_dictionary[var][model].lon, self.data_dictionary[var][model].lat)
+                    # region_mask = regionmask.mask_geopandas(region.to_geodataframe(), self.data_dictionary[var][model]) 
+                    # make the region 1 and everywhere else nan
+                    region_mask = region_mask.where(region_mask.isnull(), 1)
+                    # apply mask to datasets
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model] * region_mask
+                    # drop coordinates, etc. outside of region
+                    self.data_dictionary[var][model] = self.data_dictionary[var][model].where(~np.isnan(region_mask), drop=True)
+        else:
+            # regionmask package is used when region names are passed and not in regions.json
+            # see https://regionmask.readthedocs.io/en/stable/
+            print('extracting region(s):', box_or_regions)
+            assert type(box_or_regions[0]) is str or type(box_or_regions) is list, "input should be a list of bounds or name of region"
 
-        # if the input is a string, search for that named region or regions
-        if type(box_or_regions[0]) is str:
+            # if the input is a string, search for that named region or regions
+            if type(box_or_regions[0]) is str:
 
-            # if a single region, make into a list (for loop)
-            if not isinstance(box_or_regions, list):
-                    box_or_regions = [box_or_regions,]
+                # if a single region, make into a list (for loop)
+                if not isinstance(box_or_regions, list):
+                        box_or_regions = [box_or_regions,]
 
-            # find which source to get from: regions.json, then going through the regionmask options
-            # try the regions.json file first (user defined regions)
-            try:
-                for name in box_or_regions:
-                    # get latitude and longitude range for named region
-                    lat, lon = self.user_regions[name].values()
-                    print(name, 'found in regions.json')
-                # for each variable in the dataset
+                # find which source to get from: regions.json, then going through the regionmask options
+                # try the regions.json file first (user defined regions)
+                try:
+                    for name in box_or_regions:
+                        # get latitude and longitude range for named region
+                        lat, lon = self.user_regions[name].values()
+                        print(name, 'found in regions.json')
+                    # for each variable in the dataset
+                    for var in self.data_dictionary.keys():
+                        # for each model (get down to the xarray level from the dictionary)
+                        for model in self.data_dictionary[var].keys():
+                            # make latitude and longitude masks
+                            mask_lon = (self.data_dictionary[var][model].lon >= lon[0]) & (self.data_dictionary[var][model].lon <= lon[1])
+                            mask_lat = (self.data_dictionary[var][model].lat >= lat[0]) & (self.data_dictionary[var][model].lat <= lat[1])
+                            # apply masks and drop coordinates, etc. outside of region
+                            self.data_dictionary[var][model] = self.data_dictionary[var][model].where(mask_lon & mask_lat, drop=True)
+                # if not in regions.json, try regionmask defined regions
+                except:
+                    for region_set in self.regionmask_regions:
+                        try:
+                            eval(region_set)
+                            print(box_or_regions, 'found in', region_set[:-16])
+                            region = eval(region_set)
+                        except:
+                            pass
+
+                    # get the associated numbers for the regions
+                    region_num = region.numbers
+
+                    for var in self.data_dictionary.keys():
+                        for model in self.data_dictionary[var].keys():
+                            # make geopandas object for masking (and get correct resolution of mask)
+                            region_mask = regionmask.mask_geopandas(region.to_geodataframe(), self.data_dictionary[var][model]) 
+                            # make the regions 0 or nan using region_num associated with requested regions
+                            region_mask = region_mask.where(np.isin(region_mask, region_num))
+                            region_mask = region_mask.where(region_mask.isnull(), 1)
+                            # apply mask to datasets
+                            self.data_dictionary[var][model] = self.data_dictionary[var][model] * region_mask
+                            # drop coordinates, etc. outside of region
+                            self.data_dictionary[var][model] = self.data_dictionary[var][model].where(~np.isnan(region_mask), drop=True)
+
+            # if input is a list, use these as boundaries to define region
+            else:
+                assert len(box_or_regions) == 4, "box should have 4 entries, [minlon, minlat, maxlon, maxlat]"
                 for var in self.data_dictionary.keys():
-                    # for each model (get down to the xarray level from the dictionary)
                     for model in self.data_dictionary[var].keys():
                         # make latitude and longitude masks
-                        mask_lon = (self.data_dictionary[var][model].lon >= lon[0]) & (self.data_dictionary[var][model].lon <= lon[1])
-                        mask_lat = (self.data_dictionary[var][model].lat >= lat[0]) & (self.data_dictionary[var][model].lat <= lat[1])
+                        mask_lon = (self.data_dictionary[var][model].lon >= box_or_regions[0]) & (self.data_dictionary[var][model].lon <= box_or_regions[2])
+                        mask_lat = (self.data_dictionary[var][model].lat >= box_or_regions[1]) & (self.data_dictionary[var][model].lat <= box_or_regions[3])
                         # apply masks and drop coordinates, etc. outside of region
                         self.data_dictionary[var][model] = self.data_dictionary[var][model].where(mask_lon & mask_lat, drop=True)
-            # if not in regions.json, try regionmask defined regions
-            except:
-                for region_set in self.regionmask_regions:
-                    try:
-                        eval(region_set)
-                        print(box_or_regions, 'found in', region_set[:-16])
-                        region = eval(region_set)
-                    except:
-                        pass
-
-                # get the associated numbers for the regions
-                region_num = region.numbers
-
-                for var in self.data_dictionary.keys():
-                    for model in self.data_dictionary[var].keys():
-                        # make geopandas object for masking (and get correct resolution of mask)
-                        region_mask = regionmask.mask_geopandas(region.to_geodataframe(), self.data_dictionary[var][model]) 
-                        # make the regions 0 or nan using region_num associated with requested regions
-                        region_mask = region_mask.where(np.isin(region_mask, region_num))
-                        region_mask = region_mask.where(region_mask.isnull(), 1)
-                        # apply mask to datasets
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model] * region_mask
-                        # drop coordinates, etc. outside of region
-                        self.data_dictionary[var][model] = self.data_dictionary[var][model].where(~np.isnan(region_mask), drop=True)
-
-        # if input is a list, use these as boundaries to define region
-        else:
-            assert len(box_or_regions) == 4, "box should have 4 entries, [minlon, minlat, maxlon, maxlat]"
-            for var in self.data_dictionary.keys():
-                for model in self.data_dictionary[var].keys():
-                    # make latitude and longitude masks
-                    mask_lon = (self.data_dictionary[var][model].lon >= box_or_regions[0]) & (self.data_dictionary[var][model].lon <= box_or_regions[2])
-                    mask_lat = (self.data_dictionary[var][model].lat >= box_or_regions[1]) & (self.data_dictionary[var][model].lat <= box_or_regions[3])
-                    # apply masks and drop coordinates, etc. outside of region
-                    self.data_dictionary[var][model] = self.data_dictionary[var][model].where(mask_lon & mask_lat, drop=True)
         
         # set global_map switch to false (for up- or down-scaling resolution)
         self.global_map = False
