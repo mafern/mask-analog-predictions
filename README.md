@@ -18,15 +18,11 @@ regional climate predictions on multi-year to decadal time scales using an analo
 > [!NOTE]
 > this code base has been written to use yearly data, which can come from either earth system models or observations
 
-> [!IMPORTANT]
-> ensure that you have all the same models/members when matching on multiple variables
-
 <h2 align="center">code usage</h2>
 
-steps for running the full framework (from defining a new experiment, to learning the mask, to identifying the best analogs and plotting predictions) can be see in the new_experiment.ipynb notebook
-
-> [!TIP]
-> if the training dataset is large, training the mask and finding the best analogs can be done in terminal to avoid kernel crashes
+- run_predictions.py requires preprocessed data to define and run a new experiment, given region(s), variable, and lead time(s)
+- new_experiment.ipynb runs the full framework, from preprocessing data to defining a new experiment to learning the mask and identifying the best analogs
+- once analogs are saved from using one of the two options above, the function get_targets in best_analogs.py can be used to extract the predictions and truth for analysis
 
 <p align="center">
 <ins>example mask of weights</ins>
@@ -46,7 +42,7 @@ conda activate analog-env
 
 conda install cartopy=0.22.0 esmf=8.4.2 hdf5=1.14.1 json5=0.9.14 matplotlib=3.7.2 regionmask=0.10.0 xarray=2023.7.0 xesmf=0.7.1 pip=23.2.1
 
-pip install numpy==1.24.3 tensorflow==2.13.0 tensorflow-macos==2.13.0 silence-tensorflow==1.2.1 keras==2.13.1 ipykernel cftime
+pip install numpy==1.24.3 tensorflow==2.13.0 tensorflow-macos==2.13.0 silence-tensorflow==1.2.1 keras==2.13.1 geopandas==0.13.2 ipykernel cftime
 ```
 
 <h2 align="center">references</h2>

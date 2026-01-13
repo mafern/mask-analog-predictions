@@ -125,7 +125,7 @@ class Experiments():
                 - region: the name (run self.list_regions to get available names) or list of boundary coordinates, i.e. [minlon, minlat, maxlon, maxlat] for the target region. To skip this processing step, pass False.
                                 
             OPTIONAL INPUTS
-                - shapefile: whether to use a shapefile for the region or not (overrides regio)
+                - shapefile: whether to use a shapefile for the region or not (overrides region)
                 - val_models: which models to use for the validation split (if None, use the same models as soi_models)
                 - target_var: variable to predict (if None, use the first entry of the variable_list)
                 - window: calculate rolling mean over this number of steps (default is no windowing)
@@ -488,6 +488,7 @@ class Experiments():
           'regionmask.defined_regions.natural_earth_v5_0_0.land_10'
          ]
         # print these out
+        print()
         print('user defined regions:\n\n', np.sort(list(user_regions.keys())), '\n\n')
         for regionmask_region in regionmask_regions:
             print(regionmask_region+':\n\n', np.sort(eval(regionmask_region+'.names')), '\n\n')
