@@ -112,7 +112,7 @@ class Experiments():
             
     # -------------------------------------------------------------------------------
 
-    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, shapefile=None, val_models=None, target_var=None, window=1, trajectory=1, resolutions=1, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
+    def make_exp_dictionary(self, experiment_name, *, variable_list, analog_models, soi_models, leadtime, split, region, shapefile=None, val_models=None, target_var=None, window=False, trajectory=1, resolutions=1, time_range=None, norm_data=True, baseline=False, remove_trend=False, norm_weights=True, transfer_exp=None, mask=False, prediction_nodes=[5, 5, 5], prediction_activation='elu', learning_rate=0.001, loss='mse', patience=50, min_delta=0.0005, batch_size=64, val_batch_size=2500, max_epochs=5000, mask_activation='relu', mask_init="ones", mask_l1=0.0, mask_l2=0.0, seed=20):
         """
         Make an experiment dictionary with the following settings:
             REQUIRED INPUTS
@@ -192,7 +192,7 @@ class Experiments():
                                "get_region(experiment_settings['region'], shapefile=experiment_settings['shapefile'])": region,
                                "baseline_norm(experiment_settings['baseline'])": baseline,
                                "sync_time(experiment_settings['time_range'])": time_range,
-                               "window_time(experiment_settings['window'])": window,
+                               "window_time(-experiment_settings['window'])": window,
                                "remove_trend()": remove_trend,
                                "norm_data()": norm_data,
                                "shift_inout_time(experiment_settings['leadtime'])": leadtime}
