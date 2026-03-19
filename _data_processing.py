@@ -196,14 +196,27 @@ class DataProcessing():
         outputs:
             - data_dictionary with rolling averaged time steps
         """
-        assert window > 0, "window be a positive integer"
         print('applying window over', window, 'periods')
         # for each variable in the dataset
         for var in self.data_dictionary.keys():
             # for each model (get down to the xarray level from the dictionary)
             for model in self.data_dictionary[var].keys():
-                # rolling average over roll_period for the current time period of the data
-                self.data_dictionary[var][model] = self.data_dictionary[var][model].rolling(time=window, center=False).mean().dropna("time", how="all")
+                if window > 0:
+                    # backward windowing, for inputs (given year is last of window period)
+                    for mod_mm, mod_member in enumerate(self.data_dictionary[var][model].member.data):
+                        if mod_mm == 0:
+                            model_iter = self.data_dictionary[var][model].sel(member=[mod_member]).rolling(time=window, center=False).mean().dropna("time", how="all").drop_isel(time=-(np.arange(abs(window-1)) + 1))
+                        else:
+                            model_iter = xr.concat([model_iter, self.data_dictionary[var][model].sel(member=[mod_member]).rolling(time=window, center=False).mean().dropna("time", how="all").drop_isel(time=-(np.arange(abs(window-1)) + 1))], dim="member")
+                    self.data_dictionary[var][model] = model_iter.transpose("time", "member", "lat", "lon")
+                else:
+                    # forward windowing, for target (given year is first year of window period)
+                    for mod_mm, mod_member in enumerate(self.data_dictionary[var][model].member.data):
+                        if mod_mm == 0:
+                            model_iter = self.data_dictionary[var][model].sel(member=[mod_member]).rolling(time=-window, center=False).mean().shift(time=-(-window-1)).dropna("time", how="all").drop_isel(time=np.arange(-window-1))
+                        else:
+                            model_iter = xr.concat([model_iter, self.data_dictionary[var][model].sel(member=[mod_member]).rolling(time=-window, center=False).mean().shift(time=-(-window-1)).dropna("time", how="all").drop_isel(time=np.arange(-window-1))], dim="member")
+                    self.data_dictionary[var][model] = model_iter.transpose("time", "member", "lat", "lon")
 
         print('target windowed applied, now', self.data_dictionary[var][model].time.size, 'time steps')
     
