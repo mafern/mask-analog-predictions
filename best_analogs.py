@@ -231,14 +231,26 @@ class BestAnalogs():
         # remove some of the processing steps that are not necessary for the prediction part
         # (sync_time not needed, shift_inout_time unnecessarily removes dates)
         remove_steps = ["sync_time(experiment_settings['time_range'])",
+                        "window_time(experiment_settings['window'])",
+                        "window_time(-experiment_settings['window'])",
                         "shift_inout_time(-experiment_settings['leadtime'])",
                         "shift_inout_time(experiment_settings['leadtime'])",
                         "norm_data()"]
         for step in remove_steps:
             if np.isin(step, experiment_settings["inputs_proc_steps"]):
-                experiment_settings["inputs_proc_steps"].remove(step)
+                if step == "window_time(experiment_settings['window'])":
+                    # if it was windowed, replace with the prediction windowing
+                    sloc = np.where(np.array(experiment_settings["inputs_proc_steps"]) == step)[0][0]
+                    experiment_settings["inputs_proc_steps"][sloc] = "window_time_predictions(experiment_settings['window'])"
+                else:
+                    experiment_settings["inputs_proc_steps"].remove(step)
             if np.isin(step, experiment_settings["target_proc_steps"]):
-                experiment_settings["target_proc_steps"].remove(step)
+                if step == "window_time(-experiment_settings['window'])":
+                    # if it was windowed, replace with the prediction windowing
+                    sloc = np.where(np.array(experiment_settings["target_proc_steps"]) == step)[0][0]
+                    experiment_settings["target_proc_steps"][sloc] = "window_time_predictions(-experiment_settings['window'])"
+                else:
+                    experiment_settings["target_proc_steps"].remove(step)
         
         # load the new data
         for ii, model in enumerate(model_list):
