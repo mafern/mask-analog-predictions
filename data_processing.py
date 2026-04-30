@@ -8,8 +8,7 @@ from copy import deepcopy
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
 
-# RAW_DATA_PATH = os.path.dirname(__file__)
-RAW_DATA_PATH = '/Volumes/Data/Martin_Fernandez/'
+RAW_DATA_PATH = os.path.dirname(__file__)
 
 # -------------------------------------------------------------------------------
 

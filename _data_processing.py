@@ -11,8 +11,7 @@ import regionmask
 import json
 from copy import deepcopy
 
-# RAW_DATA_PATH = os.path.dirname(__file__)
-RAW_DATA_PATH = '/Volumes/Data/Martin_Fernandez/'
+RAW_DATA_PATH = os.path.dirname(__file__)
 
 class DataProcessing():
     """

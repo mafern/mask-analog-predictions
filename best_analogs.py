@@ -14,10 +14,6 @@ import time
 FLOAT_TYPE = np.float32
 INT_TYPE = np.int32
 
-# TODO: add get_targets version that uses multiple masks for a single initialization
-# TODO: and one that is recursive (best match becomes state to match on, and so on -- ensembles
-# either based off this single one, or only keep best match for each of the N analogs)
-
 # -------------------------------------------------------------------------------
 # general use functions
 # -------------------------------------------------------------------------------
