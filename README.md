@@ -18,7 +18,7 @@ regional climate predictions on multi-year to decadal time scales using an analo
 
 ***
 <p align="center">
-  <img src="https://github.com/mafern/mask-analog-predictions/blob/main/figures/matching_schematic" width="70%" height="70%" border="30%"/>
+  <img src="https://github.com/mafern/mask-analog-predictions/blob/main/figures/matching_schematic.png" width="70%" height="70%" border="30%"/>
 </p>
 
 
