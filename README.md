@@ -15,6 +15,21 @@ regional climate predictions on multi-year to decadal time scales using an analo
 - the randomly initialized mask of weights is updated through training until there is a strong correspondence between input (global) mse and output (target region) future mse
 - the final mask of weights can then be used in an analog forecasting framework
 
+
+***
+<p align="center">
+  <img src="https://github.com/mafern/mask-analog-predictions/blob/main/figures/matching_schematic" width="70%" height="70%" border="30%"/>
+</p>
+
+
+**the above schematic shows the analog matching step of the full prediction framework:**
+- both observations and the library of potential analogs are weighted by the learned global mask of weights
+- each state in the weighted potential analog library is compared to a weighted observation state (for example, the one at year index 0 in the figure above)
+- the weighted potential analog states that have the lowest mean-squared difference to the weighted observed state are the best matches and are used for prediction
+- this matching can be done using a trajectory of states, such that a time series of potential analog states can be compared to a time series of observed states (example shown in the figure is for a 3 year time series)
+- whether matching on a single state or a time series of states, the predictions are the future (green box in the figure, based on selected lead time) of the best matching analogs, so some potential analogs must be omitted (ones that do not have the requested future states, red box in the figure)
+
+
 > [!NOTE]
 > this code base has been written to use yearly data, which can come from either earth system models or observations
 
