@@ -27,7 +27,7 @@ regional climate predictions on multi-year to decadal time scales using an analo
 - each state in the weighted potential analog library is compared to a weighted observation state (for example, the blue dashed line in the figure for year index N)
 - the weighted potential analog states that have the lowest mean-squared difference to the weighted observed state are the best matches and are used for prediction
 - this matching can be done using a trajectory of states (yellow lines in figure), such that a time series of potential analog states can be compared to a time series of observed states (example shown in the figure is for a 3 year time series)
-- whether matching on a single state or a time series of states, the predictions are the future (green box in the figure, based on selected lead time) of the best matching analogs, so some potential analogs must be omitted (ones that do not have the requested future states, red box in the figure)
+- whether matching on a single state or a time series of states, the predictions are the future of the best matching analogs, so some potential analogs must be omitted (ones that do not have the relevant future states, red box in the figure)
 
 
 > [!NOTE]
