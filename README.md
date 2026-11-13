@@ -23,7 +23,7 @@ regional climate predictions on multi-year to decadal time scales using an analo
 
 
 **the above schematic shows the analog matching step of the full prediction framework:**
-- both observations (bottom row) and the library of potential analogs (top row) are weighted by the learned global mask of weights
+- both observations (top row) and the library of potential analogs (bottom row) are weighted by the learned global mask of weights
 - each state in the weighted potential analog library is compared to a weighted observation state (for example, the blue dashed line in the figure for year index N)
 - the weighted potential analog states that have the lowest mean-squared difference to the weighted observed state are the best matches and are used for prediction
 - this matching can be done using a trajectory of states (yellow lines in figure), such that a time series of potential analog states can be compared to a time series of observed states (example shown in the figure is for a 3 year time series)
